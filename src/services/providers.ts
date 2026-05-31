@@ -1,0 +1,136 @@
+import { APIConfig, LLMProviderId, ProviderPreset } from '../types';
+
+export const DEFAULT_PROVIDER_ID: LLMProviderId = 'deepseek';
+
+export const PROVIDER_PRESETS: ProviderPreset[] = [
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    description: '性价比高，适合大纲、正文初稿与长上下文整理。',
+    apiStyle: 'openai-compatible',
+    defaultBaseUrl: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+    modelSuggestions: ['deepseek-chat', 'deepseek-reasoner'],
+    helpText: 'DeepSeek 使用 OpenAI 兼容接口，通常可直接走 /chat/completions。',
+    requiresProxyHint: false,
+    supportsStreaming: true,
+  },
+  {
+    id: 'openai',
+    name: 'OpenAI',
+    description: '适合稳定输出、简介生成、标题变体和通用推理。',
+    apiStyle: 'openai-compatible',
+    defaultBaseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'gpt-4o',
+    modelSuggestions: ['gpt-4o', 'gpt-4.1', 'gpt-4.1-mini', 'o3-mini'],
+    helpText: 'OpenAI 官方接口可能受浏览器 CORS 影响，必要时请使用自建代理。',
+    requiresProxyHint: true,
+    supportsStreaming: true,
+  },
+  {
+    id: 'anthropic',
+    name: 'Claude / Anthropic',
+    description: '适合正文润色、长文本一致性和角色心理层次。',
+    apiStyle: 'anthropic-messages',
+    defaultBaseUrl: 'https://api.anthropic.com/v1',
+    defaultModel: 'claude-3-5-sonnet-latest',
+    modelSuggestions: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-3-opus-latest'],
+    helpText: '这里支持 Anthropic Claude API。Claude Code 本地 CLI 需要后续通过 localhost relay 接入。',
+    requiresProxyHint: true,
+    supportsStreaming: true,
+  },
+  {
+    id: 'gemini',
+    name: 'Google Gemini',
+    description: '适合大纲归纳、规则整理、多版本简介与长文本输入。',
+    apiStyle: 'gemini-generate-content',
+    defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    defaultModel: 'gemini-1.5-pro',
+    modelSuggestions: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash-exp'],
+    helpText: 'Gemini 使用官方 generateContent/streamGenerateContent 接口，API key 会作为 query 参数发送。',
+    requiresProxyHint: true,
+    supportsStreaming: true,
+  },
+  {
+    id: 'grok',
+    name: 'Grok / xAI',
+    description: '适合风格化脑暴、冲突扩展和高刺激卖点发散。',
+    apiStyle: 'openai-compatible',
+    defaultBaseUrl: 'https://api.x.ai/v1',
+    defaultModel: 'grok-2-latest',
+    modelSuggestions: ['grok-2-latest', 'grok-beta'],
+    helpText: 'xAI/Grok 使用 OpenAI 兼容接口，模型名可按官方最新文档自行填写。',
+    requiresProxyHint: true,
+    supportsStreaming: true,
+  },
+  {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    description: '一个 key 路由多个模型，适合快速切换 Claude、OpenAI、Gemini 等模型。',
+    apiStyle: 'openai-compatible',
+    defaultBaseUrl: 'https://openrouter.ai/api/v1',
+    defaultModel: 'anthropic/claude-3.5-sonnet',
+    modelSuggestions: ['anthropic/claude-3.5-sonnet', 'openai/gpt-4o', 'deepseek/deepseek-chat', 'google/gemini-pro-1.5'],
+    helpText: 'OpenRouter 使用 OpenAI 兼容接口。模型名建议使用 provider/model 格式。',
+    requiresProxyHint: false,
+    supportsStreaming: true,
+    defaultHeaders: {
+      'HTTP-Referer': window.location.origin,
+      'X-Title': 'Novel Pipeline Studio',
+    },
+  },
+  {
+    id: 'custom-openai',
+    name: '自定义 OpenAI 兼容接口',
+    description: '适合代理、One API、LiteLLM、Ollama 网关或公司内部兼容接口。',
+    apiStyle: 'openai-compatible',
+    defaultBaseUrl: 'http://localhost:3000/v1',
+    defaultModel: 'custom-model',
+    modelSuggestions: ['custom-model', 'gpt-4o-compatible', 'local-model'],
+    helpText: '接口需要兼容 /chat/completions，返回 choices/message 或 choices/delta。',
+    requiresProxyHint: false,
+    supportsStreaming: true,
+  },
+  {
+    id: 'custom-anthropic',
+    name: '自定义 Claude 兼容接口',
+    description: '适合 Anthropic 代理或自建 Claude relay。',
+    apiStyle: 'anthropic-messages',
+    defaultBaseUrl: 'http://localhost:3000/anthropic/v1',
+    defaultModel: 'claude-3-5-sonnet-latest',
+    modelSuggestions: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest'],
+    helpText: '接口需要兼容 Anthropic Messages API 的 /messages 路径。',
+    requiresProxyHint: false,
+    supportsStreaming: true,
+  },
+  {
+    id: 'local-relay',
+    name: '本地 Relay / Claude Code',
+    description: '预留给本地 Node relay、Claude Code CLI 或其他本机 Agent。',
+    apiStyle: 'local-relay',
+    defaultBaseUrl: 'http://localhost:8787/api/generate',
+    defaultModel: 'claude-code',
+    modelSuggestions: ['claude-code', 'local-agent', 'local-llm'],
+    helpText: '浏览器不能直接启动 Claude Code CLI。请先启动本地 relay，再让页面请求这个 localhost 地址。',
+    requiresProxyHint: false,
+    supportsStreaming: true,
+  },
+];
+
+export function getProviderPreset(providerId: LLMProviderId): ProviderPreset {
+  return PROVIDER_PRESETS.find(provider => provider.id === providerId) || PROVIDER_PRESETS[0];
+}
+
+export function createConfigFromProvider(providerId: LLMProviderId, previous?: APIConfig): APIConfig {
+  const preset = getProviderPreset(providerId);
+  return {
+    provider: preset.id,
+    apiStyle: preset.apiStyle,
+    apiKey: previous?.provider === preset.id ? previous.apiKey : '',
+    baseUrl: preset.defaultBaseUrl,
+    model: preset.defaultModel,
+    temperature: previous?.temperature ?? 0.7,
+    maxTokens: previous?.maxTokens ?? 4000,
+    extraHeaders: preset.defaultHeaders ?? {},
+  };
+}
