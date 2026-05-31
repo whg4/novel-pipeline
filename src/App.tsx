@@ -33,8 +33,8 @@ export default function App() {
               <BookMarked size={22} className="text-indigo-400" />
             </div>
             <div>
-              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">Master pipeline</span>
-              <h1 className="text-sm font-extrabold text-slate-200">Novel Studio</h1>
+              <span className="text-[10px] font-bold text-slate-500 tracking-wider uppercase">小说流水线</span>
+              <h1 className="text-sm font-extrabold text-slate-200">创作工作台</h1>
             </div>
           </div>
 
@@ -50,7 +50,7 @@ export default function App() {
               }`}
             >
               <BookOpen size={16} />
-              Book Dashboard
+              书架
             </button>
 
             {/* 2. Pipeline tab */}
@@ -59,7 +59,7 @@ export default function App() {
                 if (selectedProjectId) {
                   setActiveTab('pipeline');
                 } else {
-                  alert('Please select or create a book project first!');
+                  alert('请先选择或创建一个小说项目。');
                   setActiveTab('dashboard');
                 }
               }}
@@ -72,11 +72,11 @@ export default function App() {
               }`}
             >
               <span className="flex items-center gap-3">
-                <Layers size={16} /> Active Pipeline
+                <Layers size={16} /> 创作流水线
               </span>
               {activeProject && (
                 <span className="text-[9px] bg-slate-950 font-mono px-1.5 py-0.5 rounded border border-slate-800 text-indigo-300">
-                  Active
+                  已选择
                 </span>
               )}
             </button>
@@ -90,7 +90,7 @@ export default function App() {
                   : 'text-slate-400 hover:bg-slate-850 hover:text-slate-200'
               }`}
             >
-              <Sliders size={16} /> Guidelines Center
+              <Sliders size={16} /> Skill 管理
             </button>
 
             {/* 4. Settings tab */}
@@ -102,7 +102,7 @@ export default function App() {
                   : 'text-slate-400 hover:bg-slate-850 hover:text-slate-200'
               }`}
             >
-              <Key size={16} /> Connector Hub
+              <Key size={16} /> 模型连接
             </button>
           </nav>
         </div>
@@ -111,13 +111,13 @@ export default function App() {
         <div className="p-5 border-t border-slate-850 text-[10px] text-slate-500 space-y-2 font-semibold">
           {activeProject && (
             <div className="bg-slate-950/60 p-2.5 rounded-lg border border-slate-850 leading-normal animate-pulse text-indigo-300">
-              Editing: <strong>{activeProject.title}</strong>
+              当前项目：<strong>{activeProject.title}</strong>
             </div>
           )}
           <div className="flex items-center gap-1">
-            <span>Powered by</span>
+            <span>本地浏览器运行</span>
             <Heart size={8} className="text-rose-500 fill-current" />
-            <span>Vite + Gemini 3.5</span>
+            <span>多模型适配</span>
           </div>
         </div>
       </aside>

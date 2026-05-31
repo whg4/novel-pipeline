@@ -32,8 +32,8 @@ export interface Skill {
 }
 
 export type LLMProviderId =
-  | 'deepseek'
   | 'openai'
+  | 'deepseek'
   | 'anthropic'
   | 'gemini'
   | 'grok'
@@ -51,15 +51,14 @@ export type LLMApiStyle =
 export interface ProviderPreset {
   id: LLMProviderId;
   name: string;
-  description: string;
+  shortName: string;
   apiStyle: LLMApiStyle;
   defaultBaseUrl: string;
   defaultModel: string;
   modelSuggestions: string[];
+  description: string;
   helpText: string;
-  requiresProxyHint: boolean;
-  supportsStreaming: boolean;
-  defaultHeaders?: Record<string, string>;
+  directBrowserSupport: 'supported' | 'proxy-recommended' | 'relay-only';
 }
 
 export interface APIConfig {
@@ -71,4 +70,12 @@ export interface APIConfig {
   temperature: number;
   maxTokens: number;
   extraHeaders?: Record<string, string>;
+}
+
+export interface LLMConnectionTestResult {
+  ok: boolean;
+  providerName: string;
+  model: string;
+  message: string;
+  detail?: string;
 }
