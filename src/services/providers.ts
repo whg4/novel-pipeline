@@ -65,6 +65,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
       "gemini-2.5-flash-lite",
       "gemini-2.0-flash",
       "gemini-2.0-flash-lite",
+      "gemini-3.1-pro",
     ],
     description: "适合大纲结构、资料整理和多轮内容扩写。",
     helpText:
@@ -186,15 +187,5 @@ export function normalizeModelForProvider(
 
   if (providerId !== "gemini") return normalizedModel || preset.defaultModel;
 
-  const geminiModelAliases: Record<string, string> = {
-    "gemini-3.1-pro": "gemini-2.5-pro",
-    "gemini-2.5-pro-preview-06-05": "gemini-2.5-pro",
-    "gemini-2.5-flash-preview-05-20": "gemini-2.5-flash",
-  };
-
-  return (
-    geminiModelAliases[normalizedModel] ??
-    normalizedModel ??
-    preset.defaultModel
-  );
+  return normalizedModel || preset.defaultModel;
 }

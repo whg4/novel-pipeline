@@ -9,8 +9,7 @@ import {
   LLM_PAUSED_ERROR
 } from '../services/llm';
 import { 
-  Sparkles, BookOpen, Layers, Edit3, 
-  CheckSquare, Plus, Save, Copy, FileUp,
+  Sparkles, BookOpen, Layers, Edit3, Plus, Save, Copy, FileUp,
   AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download,
   MessageSquare
 } from 'lucide-react';
