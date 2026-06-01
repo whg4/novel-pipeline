@@ -766,7 +766,8 @@ export function compileChapterPrompt(
   previousChapters: Chapter[],
   skills: { key: string; content: string }[],
   isWerewolf: boolean,
-  isFemaleSlap: boolean
+  isFemaleSlap: boolean,
+  regenerationPrompt?: string
 ): { system: string; user: string } {
   const degreaseSkill = skills.find(s => s.key === 'degrease')?.content || '';
   const connectSkill = skills.find(s => s.key === 'connect_skills')?.content || '';
@@ -811,7 +812,7 @@ ${precedingContext}
 --- TARGET CHAPTER ${chapterNum} OUTLINE & EVENTS ---
 ${chapterOutline}
 
-Write next chapter Chapter ${chapterNum} now. Begin straight in narrative form with the heading formatted exactly as: "### 第 ${chapterNum} 章: [章节名]"
+${regenerationPrompt?.trim() ? `--- USER REVISION / REGENERATION INSTRUCTIONS (高优先级) ---\n${regenerationPrompt.trim()}\n(以上修改建议优先于默认生成风格，但不得违背大纲事件、角色连续性和已设定事实。)\n\n` : ''}Write next chapter Chapter ${chapterNum} now. Begin straight in narrative form with the heading formatted exactly as: "### 第 ${chapterNum} 章: [章节名]"
 `;
 
   return { system, user };

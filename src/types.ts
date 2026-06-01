@@ -49,6 +49,7 @@ export interface Chapter {
   content: string; // Main draft
   preChaptersEndHook?: string; // Text to stitch together
   logicCheckLog?: string; // Standardized check output
+  regenerationPrompt?: string; // User-supplied rewrite instructions for this chapter
   isCompleted: boolean;
   versionHistory: { content: string; timestamp: number }[];
   lastEdited: number;

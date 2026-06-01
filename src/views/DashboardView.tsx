@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Project } from '../types';
-import { Plus, BookOpen, Clock, Tag, History, Trash2, Award } from 'lucide-react';
+import { Plus, BookOpen, Clock, Tag, History, Trash2, Award, FileUp } from 'lucide-react';
 
 interface DashboardViewProps {
   onSelectProject: (projectId: number) => void;
@@ -15,7 +15,7 @@ export default function DashboardView({ onSelectProject, setActiveTab }: Dashboa
 
   const [showModal, setShowModal] = useState(false);
   const [title, setTitle] = useState('');
-  const [genre, setGenre] = useState('female-slap');
+  const [genre, setGenre] = useState('general');
   const [background, setBackground] = useState('');
   const [characters, setCharacters] = useState('');
   const [rawExample, setRawExample] = useState('');
@@ -41,10 +41,9 @@ export default function DashboardView({ onSelectProject, setActiveTab }: Dashboa
 
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
 
     const newProject: Project = {
-      title,
+      title: title.trim() || '未命名项目',
       genre,
       background,
       characters,
@@ -196,16 +195,44 @@ export default function DashboardView({ onSelectProject, setActiveTab }: Dashboa
               <div className="w-8 h-0.5 bg-accent mt-2" />
             </div>
             <form onSubmit={handleCreateProject} className="space-y-4">
+              {/* 例文 — 放到最上方 */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-bold text-ink-400 uppercase tracking-[0.15em]">例文原文 <span className="font-normal normal-case text-ink-300">（推荐上传或粘贴）</span></label>
+                  <label className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2 py-1 cursor-pointer transition">
+                    <FileUp size={11} /> 上传 TXT
+                    <input
+                      type="file"
+                      accept=".txt"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setRawExample(ev.target?.result as string || '');
+                        reader.readAsText(file, 'utf-8');
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+                <textarea
+                  value={rawExample}
+                  onChange={(e) => setRawExample(e.target.value)}
+                  className="w-full h-32 bg-paper-50 border border-rule px-3 py-2 text-sm font-mono text-xs text-ink focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent resize-none"
+                  placeholder="粘贴要仿写的例文。系统会复刻情绪线、爽点、节奏和结构，但替换成新背景、新人物、新事件。"
+                />
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-ink-400 uppercase tracking-[0.15em]">书名</label>
+                  <label className="text-[10px] font-bold text-ink-400 uppercase tracking-[0.15em]">书名 <span className="font-normal normal-case text-ink-300">（选填，可由 AI 生成备选）</span></label>
                   <input
                     type="text"
-                    required
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
                     className="w-full bg-paper-50 border border-rule px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
-                    placeholder="例如：月下纯血"
+                    placeholder="例如：月下纯血（选填）"
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -215,9 +242,9 @@ export default function DashboardView({ onSelectProject, setActiveTab }: Dashboa
                     onChange={(e) => setGenre(e.target.value)}
                     className="w-full bg-paper-50 border border-rule px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent"
                   >
-                    <option value="female-slap">大女主打脸闭环</option>
-                    <option value="classic-wolf">欧美狼人设定</option>
                     <option value="general">通用小说</option>
+                    <option value="classic-wolf">欧美狼人设定</option>
+                    <option value="female-slap">大女主打脸闭环</option>
                   </select>
                 </div>
               </div>
@@ -239,16 +266,6 @@ export default function DashboardView({ onSelectProject, setActiveTab }: Dashboa
                   onChange={(e) => setCharacters(e.target.value)}
                   className="w-full h-20 bg-paper-50 border border-rule px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent resize-none"
                   placeholder="填写女主、男主、反派、隐藏身份、专业领域、误会物证等关键信息。"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-ink-400 uppercase tracking-[0.15em]">例文原文（建议粘贴）</label>
-                <textarea
-                  value={rawExample}
-                  onChange={(e) => setRawExample(e.target.value)}
-                  className="w-full h-32 bg-paper-50 border border-rule px-3 py-2 text-sm font-mono text-xs text-ink focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent resize-none"
-                  placeholder="粘贴要仿写的例文。系统会尽量复刻情绪线、爽点、节奏和结构，但替换成新背景、新人物、新事件。"
                 />
               </div>
 

@@ -198,6 +198,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     avoid_loop: false,
     stitched_start: false
   });
+  const [chapterRegenerationPrompt, setChapterRegenerationPrompt] = useState('');
 
   // Load first chapter automatically on startup if none selected
   useEffect(() => {
@@ -349,6 +350,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setEditingTitle(ch.title);
     setEditingOutline(ch.outlineSection);
     setEditingContent(ch.content);
+    setChapterRegenerationPrompt(ch.regenerationPrompt || '');
     setDraftChecklist({
       timeline: false,
       place: false,
@@ -499,6 +501,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setEditingTitle(`第 ${nextNum} 章`);
     setEditingOutline('');
     setEditingContent('');
+    setChapterRegenerationPrompt('');
   };
 
   const handleSaveChapterManual = async () => {
@@ -545,7 +548,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         prevChapters,
         skills,
         isWerewolf,
-        isFemaleSlap
+        isFemaleSlap,
+        chapterRegenerationPrompt
       );
 
       if (resume && accumulated) {
@@ -878,7 +882,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             autoState.chapterId = ch.id;
             const chComp = compileChapterPrompt(
               currentOutline, ch.chapterNumber, ch.outlineSection, prevChs,
-              skills, project.genre === 'classic-wolf', project.genre === 'female-slap'
+              skills, project.genre === 'classic-wolf', project.genre === 'female-slap',
+              ch.regenerationPrompt || ''
             );
             if (resumingChapter) {
               chComp.user += `\n--- 已生成但暂停的正文片段 ---\n${autoState.partialText}\n\n请从该片段最后一句之后继续续写，只输出后续正文，不要重复已经写过的内容。`;
@@ -1223,9 +1228,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Right Panel: 大纲审查 & 反馈 */}
-            <div className="space-y-4">
+          {/* Right Panel: 大纲审查 & 反馈 */}
+          <div className="space-y-4">
 
               {/* 逻辑审查大纲 */}
               <div className="bg-paper-50 border border-rule p-4 space-y-3">
@@ -1310,7 +1316,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               </div>
 
             </div>
-          </div>
         </div>
       </div>
       )}
@@ -1548,6 +1553,45 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 </pre>
               </div>
             )}
+
+            {/* 本章重写建议 */}
+            <div className="bg-paper-50 border border-rule p-4 space-y-3">
+              <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                <MessageSquare size={13} className="text-accent" /> 本章重写建议
+              </h3>
+              <textarea
+                value={chapterRegenerationPrompt}
+                onChange={(e) => setChapterRegenerationPrompt(e.target.value)}
+                rows={4}
+                className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                placeholder="输入对本章的修改建议，将作为重写 prompt 注入生成..."
+                disabled={activeChapterId === null}
+              />
+              <div className="flex flex-col gap-2">
+                <button
+                  disabled={activeChapterId === null}
+                  onClick={async () => {
+                    if (activeChapterId === null) return;
+                    await db.chapters.update(activeChapterId, { regenerationPrompt: chapterRegenerationPrompt });
+                    alert('建议已保存。');
+                  }}
+                  className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-semibold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                >
+                  <Save size={11} /> 保存建议
+                </button>
+                <button
+                  disabled={isGenerating || activeChapterId === null}
+                  onClick={async () => {
+                    if (activeChapterId === null) return;
+                    await db.chapters.update(activeChapterId, { regenerationPrompt: chapterRegenerationPrompt });
+                    handleGenerateChapterStream();
+                  }}
+                  className="w-full bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                >
+                  <Sparkles size={11} className={isGenerating && activeTask === 'chapter' ? 'animate-spin' : ''} /> 按建议重新生成本章
+                </button>
+              </div>
+            </div>
 
             {/* 2. Interactive Logic Checklist */}
             <div className="bg-paper-50 border border-rule p-4 space-y-4">
