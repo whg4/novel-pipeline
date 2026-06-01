@@ -178,6 +178,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [outlineGenerationStatus, setOutlineGenerationStatus] = useState('');
   const [outlineReviewOutput, setOutlineReviewOutput] = useState('');
   const [outlineFeedback, setOutlineFeedback] = useState('');
+  const [outlineExtraSkillKeys, setOutlineExtraSkillKeys] = useState<string[]>([]);
+  const [outlineExtraSkillText, setOutlineExtraSkillText] = useState('');
 
   // ----------------------------------------------------
   // SUB-TAB 2: DRAFTING ROOM STATE
@@ -236,6 +238,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [coverPrompt, setCoverPrompt] = useState('');
   const [titleOutput, setTitleOutput] = useState('');
 
+  // 封面图片生成
+  const [coverImagePrompt, setCoverImagePrompt] = useState('');
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
+  const [isGeneratingCoverImage, setIsGeneratingCoverImage] = useState(false);
+  const [coverImageError, setCoverImageError] = useState<string | null>(null);
+  const coverImageAbortRef = useRef<AbortController | null>(null);
+
   // 自动流水线状态
   const [isAutoRunning, setIsAutoRunning] = useState(false);
   const [autoProgress, setAutoProgress] = useState<{ step: string; current: number; total: number } | null>(null);
@@ -246,6 +255,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
   // 章节逻辑审查输出
   const [logicReviewOutput, setLogicReviewOutput] = useState('');
+
+  // 同步 coverPrompt → coverImagePrompt（仅首次填入，不覆盖用户编辑）
+  useEffect(() => {
+    if (coverPrompt && !coverImagePrompt) {
+      setCoverImagePrompt(coverPrompt);
+    }
+  }, [coverPrompt]);
 
   useEffect(() => {
     const savedAutoState = loadAutoResumeState(projectId);
@@ -346,6 +362,71 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setChapterRegenerationPrompt(ch.regenerationPrompt || '');
   };
 
+  // ----------------------------------------------------
+  // ENGINE 4: COVER IMAGE GENERATION (gpt-image-2)
+  // ----------------------------------------------------
+  const handleGenerateCoverImage = async () => {
+    const prompt = coverImagePrompt.trim();
+    if (!prompt) { alert('请先输入封面提示词'); return; }
+
+    const { getProviderConfig: _getConfig } = await import('../services/llm');
+    const openaiCfg = _getConfig('openai');
+    const apiKey = openaiCfg.apiKey;
+    if (!apiKey) {
+      alert('请先在"模型连接"设置中填写 OpenAI API Key');
+      return;
+    }
+
+    const abortCtrl = new AbortController();
+    coverImageAbortRef.current = abortCtrl;
+    setIsGeneratingCoverImage(true);
+    setCoverImageError(null);
+    setCoverImageUrl(null);
+
+    try {
+      const baseUrl = (openaiCfg.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '');
+      const res = await fetch(`${baseUrl}/images/generations`, {
+        method: 'POST',
+        signal: abortCtrl.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'gpt-image-2',
+          prompt,
+          n: 1,
+          size: '1024x1536',
+          output_format: 'png',
+        }),
+      });
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`API 错误 ${res.status}: ${errBody}`);
+      }
+      const data = await res.json();
+      const imageData = data?.data?.[0];
+      if (imageData?.b64_json) {
+        setCoverImageUrl(`data:image/png;base64,${imageData.b64_json}`);
+      } else if (imageData?.url) {
+        setCoverImageUrl(imageData.url);
+      } else {
+        throw new Error('响应中未找到图片数据');
+      }
+    } catch (e: any) {
+      if (e.name !== 'AbortError') {
+        setCoverImageError(e.message || '封面图片生成失败');
+      }
+    } finally {
+      coverImageAbortRef.current = null;
+      setIsGeneratingCoverImage(false);
+    }
+  };
+
+  const handleCancelCoverImage = () => {
+    coverImageAbortRef.current?.abort();
+  };
+
   if (!project) {
     return (
       <div className="flex items-center justify-center p-12 text-ink-400">
@@ -381,7 +462,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         template,
         outlineFeedback || undefined,
         wolfSkill,
-        slapSkill
+        slapSkill,
+        outlineExtraSkillKeys,
+        outlineExtraSkillText,
+        skills
       );
 
       if (resume && latestOutline) {
@@ -1182,7 +1266,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
-                        a.download = `${project.title || '大纲'}.md`;
+                        a.download = `《${project.title || '未命名'}》大纲.md`;
                         a.click();
                         URL.revokeObjectURL(url);
                       }}
@@ -1249,12 +1333,20 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 </button>
                 {renderTaskControl('outline-review', () => handleReviewOutline(true))}
                 {outlineReviewOutput && (
-                  <textarea
-                    readOnly
-                    value={outlineReviewOutput}
-                    rows={8}
-                    className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:outline-none leading-relaxed resize-none"
-                  />
+                  <div className="space-y-2">
+                    <textarea
+                      readOnly
+                      value={outlineReviewOutput}
+                      rows={8}
+                      className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:outline-none leading-relaxed resize-none"
+                    />
+                    <button
+                      onClick={() => { navigator.clipboard.writeText(outlineReviewOutput); alert('审查结果已复制！'); }}
+                      className="w-full border border-rule bg-paper hover:bg-paper-100 text-ink-500 text-xs font-bold py-1.5 flex items-center justify-center gap-1.5 transition"
+                    >
+                      <Copy size={11} /> 复制审查结果
+                    </button>
+                  </div>
                 )}
               </div>
 
@@ -1290,6 +1382,56 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                     <Sparkles size={12} /> 用打脸闭环重新生成
                   </button>
                 </div>
+              </div>
+
+              {/* 大纲补充 Skill */}
+              <div className="bg-paper-50 border border-rule p-4 space-y-3">
+                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                  <Layers size={13} className="text-accent" /> 补充 Skill
+                </h3>
+                <div className="space-y-1 max-h-40 overflow-y-auto border border-rule p-2 bg-paper">
+                  {skills.filter(s => !['workflow', 'blurb', 'outline_template'].includes(s.key)).map(s => (
+                    <label key={s.key} className="flex items-center gap-2 text-[11px] text-ink cursor-pointer py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={outlineExtraSkillKeys.includes(s.key)}
+                        onChange={(e) => {
+                          setOutlineExtraSkillKeys(e.target.checked
+                            ? [...outlineExtraSkillKeys, s.key]
+                            : outlineExtraSkillKeys.filter((k: string) => k !== s.key));
+                        }}
+                        className="rounded accent-[#9b2d20] shrink-0"
+                      />
+                      <span className="truncate">{s.name}</span>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-ink-400">
+                  <span>或上传/粘贴临时 Skill：</span>
+                  <label className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 font-bold px-2 py-0.5 cursor-pointer transition">
+                    <FileUp size={10} /> 上传
+                    <input
+                      type="file"
+                      accept=".txt,.md"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => setOutlineExtraSkillText(ev.target?.result as string || '');
+                        reader.readAsText(file, 'utf-8');
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                </div>
+                <textarea
+                  value={outlineExtraSkillText}
+                  onChange={(e) => setOutlineExtraSkillText(e.target.value)}
+                  rows={3}
+                  className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                  placeholder="粘贴临时 Skill 内容..."
+                />
               </div>
 
               {/* 生成备选书名 */}
@@ -1722,68 +1864,89 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           </div>
 
           <div className="space-y-4">
-            {/* 书名候选 */}
-            <div className="bg-paper-50 border border-rule p-4 space-y-3">
+            {/* 封面图片生成 */}
+            <div className="bg-paper-50 border border-rule p-4 space-y-4">
               <div className="flex justify-between items-center pb-2 border-b border-rule">
                 <h3 className="text-sm font-bold text-ink flex items-center gap-1.5">
-                  <Type size={14} className="text-accent" /> 书名候选
+                  <ImageIcon size={14} className="text-accent" /> 封面图片生成
                 </h3>
-                <button
-                  disabled={isGenerating}
-                  onClick={() => handleGenerateTitleCandidates()}
-                  className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
-                >
-                  <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} /> 生成书名
-                </button>
-                {renderTaskControl('title', () => handleGenerateTitleCandidates(true))}
+                <span className="text-[10px] text-ink-400 border border-rule px-2 py-0.5">gpt-image-2</span>
               </div>
-              {titleOutput ? (
-                <div className="space-y-2">
-                  <pre className="text-xs text-ink leading-relaxed whitespace-pre-wrap font-sans">{titleOutput}</pre>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(titleOutput); alert('书名候选已复制！'); }}
-                    className="text-xs text-accent hover:text-accent-hover font-semibold"
-                  >
-                    复制全部书名
-                  </button>
-                </div>
-              ) : (
-                <div className="text-center py-6 text-ink-300 border border-rule border-dashed">
-                  <Type size={20} className="mx-auto mb-2" />
-                  <span className="text-[10px] font-semibold block">点击“生成书名”，根据大纲生成 8 个备选书名。</span>
-                </div>
-              )}
-            </div>
-
-            {/* 封面提示词 */}
-            <div className="bg-paper-50 border border-rule p-4 space-y-4">
-              <h3 className="text-xs font-bold text-accent uppercase tracking-widest flex items-center gap-1.5">
-                <ImageIcon size={13} /> 封面提示词
-              </h3>
               <p className="text-[10px] text-ink-400 leading-normal">
-                用于 DALL-E 3 / Midjourney 等 AI 绘图模型的竖版封面生成提示词：
+                使用 OpenAI <code className="bg-paper border border-rule px-1">gpt-image-2</code> 模型生成竖版封面（1024×1536）。需在"模型连接"中配置 OpenAI API Key。
               </p>
 
-              {coverPrompt ? (
-                <div className="space-y-3">
-                  <textarea
-                    readOnly
-                    value={coverPrompt}
-                    className="w-full h-32 bg-paper border border-rule p-2.5 font-mono text-[10px] text-ink resize-none focus:outline-none"
-                  />
+              {/* 提示词输入框 */}
+              <div className="space-y-2">
+                <label className="text-[10px] font-bold text-ink-400 uppercase tracking-widest block">封面提示词</label>
+                <textarea
+                  value={coverImagePrompt}
+                  onChange={e => setCoverImagePrompt(e.target.value)}
+                  rows={5}
+                  placeholder={coverPrompt ? '已从大纲自动生成提示词，可直接编辑后生成图片…' : '先点击左侧"一键生成推广素材"自动生成提示词，或在此直接输入英文提示词…'}
+                  className="w-full bg-paper border border-rule p-2.5 font-mono text-[10px] text-ink resize-y focus:outline-none focus:border-accent"
+                />
+              </div>
+
+              {/* 操作按钮行 */}
+              <div className="flex gap-2">
+                <button
+                  onClick={handleGenerateCoverImage}
+                  disabled={isGeneratingCoverImage || !coverImagePrompt.trim()}
+                  className="flex-1 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-2 flex items-center justify-center gap-1.5 transition"
+                >
+                  {isGeneratingCoverImage ? (
+                    <><Sparkles size={12} className="animate-spin" /> 生成中…</>
+                  ) : (
+                    <><Sparkles size={12} /> 生成封面图片</>
+                  )}
+                </button>
+                {isGeneratingCoverImage && (
                   <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(coverPrompt);
-                      alert('Cover prompt copied text!');
-                    }}
-                    className="w-full border border-rule bg-paper hover:bg-paper-100 text-ink text-center font-bold text-xs py-2 transition"
+                    onClick={handleCancelCoverImage}
+                    className="border border-rule bg-paper hover:bg-red-50 text-ink-500 hover:text-red-600 text-xs font-bold px-3 py-2 flex items-center gap-1 transition"
                   >
-                    复制提示词
+                    <Pause size={12} /> 暂停
                   </button>
+                )}
+                {coverImagePrompt && (
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(coverImagePrompt); alert('提示词已复制！'); }}
+                    className="border border-rule bg-paper hover:bg-paper-100 text-ink text-xs font-bold px-3 py-2 transition"
+                  >
+                    <Copy size={12} />
+                  </button>
+                )}
+              </div>
+
+              {/* 错误提示 */}
+              {coverImageError && (
+                <div className="flex items-start gap-2 bg-red-50 border border-red-200 p-2.5 text-[10px] text-red-700">
+                  <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                  <span>{coverImageError}</span>
                 </div>
-              ) : (
-                <div className="text-center py-8 text-ink-300 border border-rule bg-paper">
-                  <span className="text-[10px] font-semibold block">点击左侧“一键生成推广素材”后，此处将自动生成封面提示词。</span>
+              )}
+
+              {/* 生成的图片 */}
+              {coverImageUrl ? (
+                <div className="space-y-2">
+                  <img
+                    src={coverImageUrl}
+                    alt="AI 生成封面"
+                    className="w-full border border-rule"
+                  />
+                  <a
+                    href={coverImageUrl}
+                    download="novel-cover.png"
+                    className="w-full border border-rule bg-paper hover:bg-paper-100 text-ink text-center font-bold text-xs py-2 flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Download size={12} /> 下载封面图片
+                  </a>
+                </div>
+              ) : !isGeneratingCoverImage && !coverImageError && (
+                <div className="text-center py-8 text-ink-300 border border-rule bg-paper border-dashed">
+                  <ImageIcon size={24} className="mx-auto mb-2" />
+                  <span className="text-[10px] font-semibold block">填写提示词后点击"生成封面图片"</span>
                 </div>
               )}
             </div>

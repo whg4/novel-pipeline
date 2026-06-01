@@ -691,13 +691,20 @@ export function compileOutlinePrompt(
   templateSkill: string,
   validationFeedback?: string,
   wolfSkill?: string,
-  slapSkill?: string
+  slapSkill?: string,
+  extraSkillKeys: string[] = [],
+  extraSkillText = '',
+  allSkills: { key: string; content: string }[] = []
 ): { system: string; user: string } {
+  const extraSkillContents = extraSkillKeys
+    .map(k => allSkills.find(s => s.key === k)?.content || '')
+    .filter(Boolean);
+
   const system = `你是一位精通网文创作的资深编辑，专门进行仿写大纲生成。严格遵循以下规则。
 
 --- 大纲输出格式模板 ---
 ${templateSkill}
-${wolfSkill ? `\n--- 欧美狼人世界设定 ---\n${wolfSkill}` : ''}${slapSkill ? `\n--- 大女主打脸闭环技法 ---\n${slapSkill}` : ''}`;
+${wolfSkill ? `\n--- 欧美狼人世界设定 ---\n${wolfSkill}` : ''}${slapSkill ? `\n--- 大女主打脸闭环技法 ---\n${slapSkill}` : ''}${extraSkillContents.length > 0 ? `\n--- 补充 Skill ---\n${extraSkillContents.join('\n\n')}` : ''}${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}`;
 
   const user = `《例文》是例文。我需要你根据《大纲skill》生成仿写例文的大纲。${wolfSkill ? '此小说是欧美狼人背景，无玄幻魔法元素，参照《欧美狼人skill》。' : ''}
 
