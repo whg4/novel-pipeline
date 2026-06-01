@@ -6,56 +6,54 @@
 
 # 单篇例文工作流
 
-#### 大纲与正文：
+#### 大纲与正文
 
-1.  《xx》是例文。我要你根据例文进行仿写，要求情绪线、爽点、节奏一致，输出仿写的小说大纲，传入
-    
-    1.  例文
-        
-    2.  《仿写大纲输出模板》[《仿写大纲输出格式模板 v3.0》](https://alidocs.dingtalk.com/i/nodes/1DKw2zgV2PRll1qeiPdm1kGg8B5r9YAn?utm_scene=person_space)
-        
-    3.  若是狼人文，传入《欧美狼人skill》 [《⚙️ Skill: 欧美狼人设定 (Classic Tribal Werewolf Code)》](https://alidocs.dingtalk.com/i/nodes/NkDwLng8ZLMddjArixpQLBROVKMEvZBY?utm_scene=person_space)
-        
-2.  审查大纲
-    
-3.  《xxx》是大纲。《AI去油》是写作手法约束。《串联》是你写小说需要执行的要求。根据上述要求，根据大纲，写小说第一章。写完后执行《逻辑审查》，传入：
-    
-    1.  大纲
-        
-    2.  AI去油[《⚙️ 终极小说写法 Skill：\[AI去油法则\]》](https://alidocs.dingtalk.com/i/nodes/pYLaezmVNeLppQYriGNjPX3YWrMqPxX6?utm_scene=person_space)
-        
-    3.  串联[《串联：大纲与各种skill》](https://alidocs.dingtalk.com/i/nodes/nYMoO1rWxaD99dwBCzRYlyKnV47Z3je9?utm_scene=person_space)
-        
-    4.  逻辑审查[《⚙️ 小说正文逻辑审查流程（Skill）v3.2》](https://alidocs.dingtalk.com/i/nodes/mweZ92PV6MvKKqA9UKRnoQPgWxEKBD6p?utm_scene=person_space)
-        
-    5.  看情况是否传入：《打脸闭环》[《⚙️ 终极Skill：\[沉浸式大女主爽文：打脸闭环\]》](https://alidocs.dingtalk.com/i/nodes/pGBa2Lm8aGz44rgaTERmRnppVgN7R35y?utm_scene=person_space)
-        
-4.  审查正文
-    
+1. 《xx》是例文。我要你根据例文进行仿写，要求情绪线、爽点、节奏一致，输出仿写的小说大纲，传入
 
-#### 简介：
+    1. 例文
+
+    2. 《仿写大纲输出模板》-《仿写大纲输出格式模板 v3.0》
+
+    3. 若是狼人文，传入《欧美狼人skill》 《⚙️ Skill: 欧美狼人设定 (Classic Tribal Werewolf Code)》
+
+2. 审查大纲
+
+3. 《xxx》是大纲。《AI去油》是写作手法约束。《串联》是你写小说需要执行的要求。根据上述要求，根据大纲，写小说第一章。写完后执行《逻辑审查》，传入：
+
+    1. 大纲
+
+    2. AI去油-《⚙️ 终极小说写法 Skill：\[AI去油法则\]》
+
+    3. 串联-《串联：大纲与各种skill》
+
+    4. 逻辑审查-《⚙️ 小说正文逻辑审查流程（Skill）v3.2》
+
+    5. 看情况是否传入：《打脸闭环》《⚙️ 终极Skill：\[沉浸式大女主爽文：打脸闭环\]》
+
+4. 审查正文
+
+#### 简介
 
 根据大纲，正文，简介skill，生成简介：
 
-*   大纲
-    
-*   正文（可选）
-    
-*   简介skill [《🎯 爆款网文简介（导语）生成 Skill v4.1》](https://alidocs.dingtalk.com/i/nodes/pGBa2Lm8aGz44rgaTERmald2VgN7R35y?utm_scene=person_space)
-    
+* 大纲
 
-#### 书名：
+* 正文（可选）
+
+* 简介skill [《🎯 爆款网文简介（导语）生成 Skill v4.1》](https://alidocs.dingtalk.com/i/nodes/pGBa2Lm8aGz44rgaTERmald2VgN7R35y?utm_scene=person_space)
+
+#### 书名
 
 直接传入大纲，让AI多生成几个以供挑选。
 
-#### 封面：
+#### 封面
 
-1.  根据大纲生成提示词，传入：
-    
-    1.  大纲
-        
-2.  使用gpt-image-2，传入提示词，注意：
-    
-    1.  需要显示书名
-        
-    2.  竖版，可以裁剪为700x1000 的
+1. 根据大纲生成提示词，传入：
+
+    1. 大纲
+
+2. 使用gpt-image-2，传入提示词，注意：
+
+    1. 需要显示书名
+
+    2. 竖版，可以裁剪为700x1000 的
