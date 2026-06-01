@@ -6,8 +6,9 @@ import DashboardView from './views/DashboardView';
 import SkillRegistry from './views/SkillRegistry';
 import SettingsView from './views/SettingsView';
 import PipelineView from './views/PipelineView';
+import StageModelView from './views/StageModelView';
 import { 
-  BookOpen, Layers, BookMarked, Sliders, Key, Heart 
+  BookOpen, Layers, BookMarked, Sliders, Key, Heart, Cpu
 } from 'lucide-react';
 
 export default function App() {
@@ -25,8 +26,9 @@ export default function App() {
   const navItems = [
     { id: 'dashboard', icon: <BookOpen size={14} />, label: '书架', num: '01', disabled: false },
     { id: 'pipeline', icon: <Layers size={14} />, label: '创作流水线', num: '02', disabled: !selectedProjectId },
-    { id: 'skills', icon: <Sliders size={14} />, label: 'Skill 管理', num: '03', disabled: false },
-    { id: 'settings', icon: <Key size={14} />, label: '模型连接', num: '04', disabled: false },
+    { id: 'stage-models', icon: <Cpu size={14} />, label: '阶段模型', num: '03', disabled: false },
+    { id: 'skills', icon: <Sliders size={14} />, label: 'Skill 管理', num: '04', disabled: false },
+    { id: 'settings', icon: <Key size={14} />, label: '模型连接', num: '05', disabled: false },
   ];
 
   return (
@@ -103,6 +105,7 @@ export default function App() {
         {activeTab === 'pipeline' && selectedProjectId && (
           <PipelineView projectId={selectedProjectId} />
         )}
+        {activeTab === 'stage-models' && <StageModelView />}
         {activeTab === 'skills' && <SkillRegistry />}
         {activeTab === 'settings' && <SettingsView />}
       </main>

@@ -1,18 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import type { APIConfig, Chapter, LLMProviderId, OutlineChecklistKey, OutlineValidationResult, StageAssignments, StageRole } from '../types';
+import type { Chapter, OutlineChecklistKey, OutlineValidationResult } from '../types';
 import {
   runLLMStream, compileOutlinePrompt, compileChapterPrompt, compileBlurbPrompt,
   compileLogicReviewPrompt, compileTitlePrompt, compileCoverPrompt,
-  getConfigForStage, getStageAssignments, saveStageAssignments,
-  saveStageModelOverride, validateOutlineAgainstChecklist
+  LLM_PAUSED_ERROR, validateOutlineAgainstChecklist
 } from '../services/llm';
-import { getProviderPreset, PROVIDER_PRESETS } from '../services/providers';
 import { 
   Sparkles, BookOpen, Layers, Edit3, 
   CheckSquare, Plus, Save, Copy, 
-  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download, Cpu
+  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download
 } from 'lucide-react';
 
 interface PipelineViewProps {
@@ -20,6 +18,8 @@ interface PipelineViewProps {
 }
 
 const OUTLINE_MAX_ATTEMPTS = 3;
+
+type GenerationTask = 'auto' | 'outline' | 'chapter' | 'review' | 'marketing' | 'title';
 
 const OUTLINE_CHECKLIST_ITEMS: { key: OutlineChecklistKey; title: string }[] = [
   { key: 'a_rhythm', title: '1:1 内核情绪、节奏、爽点复刻' },
@@ -34,13 +34,6 @@ const OUTLINE_CHECKLIST_ITEMS: { key: OutlineChecklistKey; title: string }[] = [
   { key: 'j_cliffhangers', title: '章末强力倒计时与悬念勾子' },
 ];
 
-const STAGE_MODEL_ITEMS: { stage: StageRole; label: string }[] = [
-  { stage: 'outline', label: '大纲' },
-  { stage: 'chapter', label: '正文' },
-  { stage: 'review', label: '审查' },
-  { stage: 'marketing', label: '营销' },
-];
-
 function createChecklistState(value = false): Record<OutlineChecklistKey, boolean> {
   return OUTLINE_CHECKLIST_ITEMS.reduce((acc, item) => {
     acc[item.key] = value;
@@ -53,13 +46,6 @@ function checklistStateFromValidation(result: OutlineValidationResult): Record<O
     acc[item.key] = Boolean(result.items.find(candidate => candidate.key === item.key)?.passed);
     return acc;
   }, {} as Record<OutlineChecklistKey, boolean>);
-}
-
-function buildStageConfigs(): Record<StageRole, APIConfig> {
-  return STAGE_MODEL_ITEMS.reduce((acc, item) => {
-    acc[item.stage] = getConfigForStage(item.stage);
-    return acc;
-  }, {} as Record<StageRole, APIConfig>);
 }
 
 function buildValidationFeedback(result: OutlineValidationResult): string {
@@ -125,6 +111,9 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // View States
   const [pipelineTab, setPipelineTab] = useState<'outline' | 'drafting' | 'marketing'>('outline');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [activeTask, setActiveTask] = useState<GenerationTask | null>(null);
+  const [pausedTask, setPausedTask] = useState<GenerationTask | null>(null);
+  const [pauseMessage, setPauseMessage] = useState('');
   const [generationOutput, setGenerationOutput] = useState('');
 
   // ----------------------------------------------------
@@ -133,9 +122,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [outlineChecklist, setOutlineChecklist] = useState<Record<OutlineChecklistKey, boolean>>(createChecklistState());
   const [outlineValidationResult, setOutlineValidationResult] = useState<OutlineValidationResult | null>(null);
   const [outlineGenerationStatus, setOutlineGenerationStatus] = useState('');
-  const [stageAssignments, setStageAssignments] = useState<StageAssignments>(getStageAssignments);
-  const [stageConfigs, setStageConfigs] = useState<Record<StageRole, APIConfig>>(buildStageConfigs);
-  const [activeStageTab, setActiveStageTab] = useState<StageRole>(STAGE_MODEL_ITEMS[0].stage);
 
   // ----------------------------------------------------
   // SUB-TAB 2: DRAFTING ROOM STATE
@@ -203,6 +189,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [isAutoRunning, setIsAutoRunning] = useState(false);
   const [autoProgress, setAutoProgress] = useState<{ step: string; current: number; total: number } | null>(null);
   const autoPauseRef = useRef(false);
+  const generationAbortRef = useRef<AbortController | null>(null);
+  const pausedTaskRef = useRef<GenerationTask | null>(null);
 
   // 章节逻辑审查输出
   const [logicReviewOutput, setLogicReviewOutput] = useState('');
@@ -213,23 +201,72 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setOutlineChecklist(checklistStateFromValidation(project.outlineValidationResult));
   }, [project?.outlineValidationUpdatedAt]);
 
-  const handlePipelineStageProviderChange = (stage: StageRole, provider: LLMProviderId) => {
-    const nextAssignments = { ...stageAssignments, [stage]: provider };
-    setStageAssignments(nextAssignments);
-    saveStageAssignments(nextAssignments);
-    saveStageModelOverride(stage, '');
-    setStageConfigs({ ...buildStageConfigs(), [stage]: getConfigForStage(stage) });
+  const beginGenerationTask = (task: GenerationTask, resume = false) => {
+    const controller = new AbortController();
+    generationAbortRef.current = controller;
+    pausedTaskRef.current = null;
+    setActiveTask(task);
+    if (!resume) setPausedTask(null);
+    setPauseMessage('');
+
+    return {
+      signal: controller.signal,
+      shouldPause: () => pausedTaskRef.current === task,
+    };
   };
 
-  const handlePipelineStageModelChange = (stage: StageRole, model: string) => {
-    setStageConfigs(prev => ({
-      ...prev,
-      [stage]: {
-        ...(prev[stage] ?? getConfigForStage(stage)),
-        model,
-      },
-    }));
-    saveStageModelOverride(stage, model);
+  const pauseCurrentTask = () => {
+    if (!activeTask) return;
+    pausedTaskRef.current = activeTask;
+    if (activeTask === 'auto') autoPauseRef.current = true;
+    setPausedTask(activeTask);
+    setPauseMessage('已暂停，当前内容已保留。');
+    generationAbortRef.current?.abort();
+  };
+
+  const finishGenerationTask = (task: GenerationTask, paused = false) => {
+    setActiveTask(prev => prev === task ? null : prev);
+    if (!paused) {
+      setPausedTask(prev => prev === task ? null : prev);
+      pausedTaskRef.current = null;
+    }
+    generationAbortRef.current = null;
+  };
+
+  const isPausedError = (error: any) => error?.message === LLM_PAUSED_ERROR || error?.name === 'AbortError';
+
+  const markTaskPaused = (task: GenerationTask, message = '已暂停，当前内容已保留。') => {
+    pausedTaskRef.current = task;
+    setPausedTask(task);
+    setPauseMessage(message);
+  };
+
+  const renderTaskControl = (task: GenerationTask, onResume: () => void) => {
+    if (activeTask === task) {
+      return (
+        <button
+          type="button"
+          onClick={pauseCurrentTask}
+          className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
+        >
+          <Pause size={12} /> 暂停
+        </button>
+      );
+    }
+
+    if (pausedTask === task) {
+      return (
+        <button
+          type="button"
+          onClick={onResume}
+          className="bg-accent hover:bg-accent-hover text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
+        >
+          <Play size={12} /> 继续
+        </button>
+      );
+    }
+
+    return null;
   };
 
   // Defined before the project guard so the useEffect above can safely reference it
@@ -261,22 +298,26 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // ----------------------------------------------------
   // ENGINE 1: OUTLINE GENERATION
   // ----------------------------------------------------
-  const handleGenerateOutline = async () => {
+  const handleGenerateOutline = async (resume = false) => {
+    const streamOptions = beginGenerationTask('outline', resume);
     setIsGenerating(true);
-    setGenerationOutput('');
-    setOutlineGenerationStatus('准备生成大纲...');
-    setOutlineValidationResult(null);
-    setOutlineChecklist(createChecklistState());
+    if (!resume) {
+      setGenerationOutput('');
+      setOutlineValidationResult(null);
+      setOutlineChecklist(createChecklistState());
+    }
+    setOutlineGenerationStatus(resume ? '继续生成大纲...' : '准备生成大纲...');
     const template = skills.find(s => s.key === 'outline_template')?.content || '';
+    let latestOutline = resume ? generationOutput : '';
+    let wasPaused = false;
     
     try {
       let validationFeedback = '';
-      let latestOutline = '';
       let latestValidation: OutlineValidationResult | null = null;
 
       for (let attempt = 1; attempt <= OUTLINE_MAX_ATTEMPTS; attempt++) {
         setOutlineGenerationStatus(`生成大纲中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
-        setGenerationOutput('');
+        if (!resume || attempt > 1) setGenerationOutput('');
 
         const compiled = compileOutlinePrompt(
           project.rawExample,
@@ -286,11 +327,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           validationFeedback
         );
 
-        let accumulated = '';
+        if (resume && latestOutline && attempt === 1) {
+          compiled.user += `\n--- 已生成但被暂停的大纲片段 ---\n${latestOutline}\n\n请从该片段后继续补全，不要重写已经完整输出的部分。`;
+        }
+
+        let accumulated = resume && attempt === 1 ? latestOutline : '';
         await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
           accumulated += tok;
+          latestOutline = accumulated;
           setGenerationOutput(accumulated);
-        });
+        }, streamOptions);
         latestOutline = accumulated;
 
         setOutlineGenerationStatus(`自检清单审查中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
@@ -336,10 +382,25 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       }
       setOutlineGenerationStatus('自检未通过：已保留最新草稿，请根据失败项调整后再生成。');
     } catch (e: any) {
-      alert(`大纲生成失败：${e.message}`);
-      setOutlineGenerationStatus('大纲生成失败。');
+      if (isPausedError(e)) {
+        wasPaused = true;
+        markTaskPaused('outline');
+        if (latestOutline) {
+          await db.projects.update(projectId, {
+            outline: latestOutline,
+            outlineValidationStatus: undefined,
+            outlineValidationResult: undefined,
+            outlineValidationUpdatedAt: Date.now(),
+          });
+        }
+        setOutlineGenerationStatus('已暂停，当前大纲片段已保留。');
+      } else {
+        alert(`大纲生成失败：${e.message}`);
+        setOutlineGenerationStatus('大纲生成失败。');
+      }
     } finally {
       setIsGenerating(false);
+      finishGenerationTask('outline', wasPaused);
     }
   };
 
@@ -398,11 +459,14 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     alert('草稿已保存。');
   };
 
-  const handleGenerateChapterStream = async () => {
+  const handleGenerateChapterStream = async (resume = false) => {
     if (activeChapterId === null) return;
+    const streamOptions = beginGenerationTask('chapter', resume);
     setIsGenerating(true);
     setChapterError(null);
-    setEditingContent('');
+    if (!resume) setEditingContent('');
+    let accumulated = resume ? editingDraft : '';
+    let wasPaused = false;
     
     // Determine preceding chapters for stich context
     const prevChapters = chapters.filter(c => c.chapterNumber < (chapters.find(x => x.id === activeChapterId)?.chapterNumber || 0));
@@ -421,63 +485,119 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         isFemaleSlap
       );
 
-      let accumulated = '';
+      if (resume && accumulated) {
+        compiled.user += `\n--- 已生成但被暂停的正文片段 ---\n${accumulated}\n\n请从该片段最后一句之后继续续写，只输出后续正文，不要重复已经写过的内容。`;
+      }
+
       await runLLMStream('chapter', compiled.system, compiled.user, (tok) => {
         accumulated += tok;
         setEditingContent(accumulated);
-      });
+      }, streamOptions);
 
       // Update db directly
       await db.chapters.update(activeChapterId, {
         content: accumulated,
         lastEdited: Date.now()
       });
-
-      setIsGenerating(false);
     } catch (e: any) {
-      setChapterError(e.message);
+      if (isPausedError(e)) {
+        wasPaused = true;
+        markTaskPaused('chapter');
+        setChapterError('已暂停，当前正文草稿已保留。');
+        await db.chapters.update(activeChapterId, {
+          content: accumulated,
+          lastEdited: Date.now(),
+        });
+      } else {
+        setChapterError(e.message);
+      }
+    } finally {
       setIsGenerating(false);
+      finishGenerationTask('chapter', wasPaused);
     }
   };
 
   // ----------------------------------------------------
   // ENGINE 3: MARKETING SHORTS
   // ----------------------------------------------------
-  const handleGenerateMarketingKit = async () => {
+  const handleGenerateMarketingKit = async (resume = false) => {
+    const streamOptions = beginGenerationTask('marketing', resume);
     setIsGenerating(true);
-    setBlurbsOutput('');
-    setTitleOutput('');
-    setCoverPrompt('');
+    if (!resume) {
+      setBlurbsOutput('');
+      setTitleOutput('');
+      setCoverPrompt('');
+    }
     const blurbTemplate = skills.find(s => s.key === 'blurb')?.content || '';
     const sampleText = chapters.slice(0, 3).map(c => c.content).join('\n\n');
+    let wasPaused = false;
 
     try {
       // 1. 生成简介
-      const blurbCompiled = compileBlurbPrompt(project.outline, sampleText, blurbTemplate);
-      let blurbAcc = '';
-      await runLLMStream('marketing', blurbCompiled.system, blurbCompiled.user, tok => {
-        blurbAcc += tok;
-        setBlurbsOutput(blurbAcc);
-      });
+      if (!resume || !blurbsOutput) {
+        const blurbCompiled = compileBlurbPrompt(project.outline, sampleText, blurbTemplate);
+        let blurbAcc = resume ? blurbsOutput : '';
+        await runLLMStream('marketing', blurbCompiled.system, blurbCompiled.user, tok => {
+          blurbAcc += tok;
+          setBlurbsOutput(blurbAcc);
+        }, streamOptions);
+      }
 
       // 2. 生成书名候选
-      const titleCompiled = compileTitlePrompt(project.outline);
-      let titleAcc = '';
-      await runLLMStream('marketing', titleCompiled.system, titleCompiled.user, tok => { titleAcc += tok; });
-      await db.projects.update(projectId, { titleCandidates: titleAcc });
-      setTitleOutput(titleAcc);
+      if (!resume || !titleOutput) {
+        const titleCompiled = compileTitlePrompt(project.outline);
+        let titleAcc = resume ? titleOutput : '';
+        await runLLMStream('marketing', titleCompiled.system, titleCompiled.user, tok => { titleAcc += tok; }, streamOptions);
+        await db.projects.update(projectId, { titleCandidates: titleAcc });
+        setTitleOutput(titleAcc);
+      }
 
       // 3. 生成封面提示词
-      const coverCompiled = compileCoverPrompt(project.outline, project.genre);
-      let coverAcc = '';
-      await runLLMStream('marketing', coverCompiled.system, coverCompiled.user, tok => { coverAcc += tok; });
-      await db.projects.update(projectId, { coverPrompt: coverAcc });
-      setCoverPrompt(coverAcc);
-
-      setIsGenerating(false);
+      if (!resume || !coverPrompt) {
+        const coverCompiled = compileCoverPrompt(project.outline, project.genre);
+        let coverAcc = resume ? coverPrompt : '';
+        await runLLMStream('marketing', coverCompiled.system, coverCompiled.user, tok => { coverAcc += tok; }, streamOptions);
+        await db.projects.update(projectId, { coverPrompt: coverAcc });
+        setCoverPrompt(coverAcc);
+      }
     } catch (e: any) {
-      alert(`推广素材生成失败：${e.message}`);
+      if (isPausedError(e)) {
+        wasPaused = true;
+        markTaskPaused('marketing');
+      } else {
+        alert(`推广素材生成失败：${e.message}`);
+      }
+    } finally {
       setIsGenerating(false);
+      finishGenerationTask('marketing', wasPaused);
+    }
+  };
+
+  const handleGenerateTitleCandidates = async (resume = false) => {
+    const streamOptions = beginGenerationTask('title', resume);
+    setIsGenerating(true);
+    if (!resume) setTitleOutput('');
+    let acc = resume ? titleOutput : '';
+    let wasPaused = false;
+
+    try {
+      const comp = compileTitlePrompt(project.outline);
+      await runLLMStream('marketing', comp.system, comp.user, tok => {
+        acc += tok;
+        setTitleOutput(acc);
+      }, streamOptions);
+      await db.projects.update(projectId, { titleCandidates: acc });
+    } catch (e: any) {
+      if (isPausedError(e)) {
+        wasPaused = true;
+        markTaskPaused('title');
+        if (acc) await db.projects.update(projectId, { titleCandidates: acc });
+      } else {
+        alert(`书名生成失败：${e.message}`);
+      }
+    } finally {
+      setIsGenerating(false);
+      finishGenerationTask('title', wasPaused);
     }
   };
 
@@ -492,38 +612,49 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   };
 
   // 单章 AI 逻辑审查
-  const handleLogicReviewChapter = async (ch: Chapter) => {
+  const handleLogicReviewChapter = async (ch: Chapter, resume = false) => {
     if (!ch.content || ch.content.length < 50) {
       alert('该章节还没有正文，无法进行逻辑审查。');
       return;
     }
+    const streamOptions = beginGenerationTask('review', resume);
     setIsGenerating(true);
-    setLogicReviewOutput('');
+    if (!resume) setLogicReviewOutput('');
     const logicSkill = skills.find(s => s.key === 'logic_check')?.content || '';
+    let acc = resume ? logicReviewOutput : '';
+    let wasPaused = false;
     try {
       const compiled = compileLogicReviewPrompt(ch.content, ch.chapterNumber, logicSkill);
-      let acc = '';
       await runLLMStream('review', compiled.system, compiled.user, tok => {
         acc += tok;
         setLogicReviewOutput(acc);
-      });
+      }, streamOptions);
       await db.chapters.update(ch.id!, { logicCheckLog: acc });
     } catch (e: any) {
-      alert(`逻辑审查失败：${e.message}`);
+      if (isPausedError(e)) {
+        wasPaused = true;
+        markTaskPaused('review');
+        if (acc) await db.chapters.update(ch.id!, { logicCheckLog: acc });
+      } else {
+        alert(`逻辑审查失败：${e.message}`);
+      }
     } finally {
       setIsGenerating(false);
+      finishGenerationTask('review', wasPaused);
     }
   };
 
   // 一键全自动流水线
-  const handleRunAutoPipeline = async () => {
+  const handleRunAutoPipeline = async (resume = false) => {
     if (!project || isGenerating || isAutoRunning) return;
+    const streamOptions = beginGenerationTask('auto', resume);
     setIsAutoRunning(true);
     setIsGenerating(true);
     autoPauseRef.current = false;
+    let wasPaused = false;
 
     const checkPause = () => {
-      if (autoPauseRef.current) throw new Error('__PAUSED__');
+      if (autoPauseRef.current || pausedTaskRef.current === 'auto') throw new Error(LLM_PAUSED_ERROR);
     };
 
     try {
@@ -553,7 +684,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           await runLLMStream('outline', compiled.system, compiled.user, tok => {
             acc += tok;
             setGenerationOutput(acc);
-          });
+          }, streamOptions);
           currentOutline = acc;
           checkPause();
 
@@ -624,7 +755,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             skills, project.genre === 'classic-wolf', project.genre === 'female-slap'
           );
           let draftAcc = '';
-          await runLLMStream('chapter', chComp.system, chComp.user, tok => { draftAcc += tok; });
+          await runLLMStream('chapter', chComp.system, chComp.user, tok => {
+            draftAcc += tok;
+            if (activeChapterId === ch.id) setEditingContent(draftAcc);
+          }, streamOptions);
           await db.chapters.update(ch.id!, { content: draftAcc, lastEdited: Date.now() });
           allChapters[i] = { ...ch, content: draftAcc };
           if (activeChapterId === ch.id) setEditingContent(draftAcc);
@@ -636,7 +770,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         if (content && logicSkill) {
           const reviewComp = compileLogicReviewPrompt(content, ch.chapterNumber, logicSkill);
           let reviewAcc = '';
-          await runLLMStream('review', reviewComp.system, reviewComp.user, tok => { reviewAcc += tok; });
+          await runLLMStream('review', reviewComp.system, reviewComp.user, tok => { reviewAcc += tok; }, streamOptions);
           await db.chapters.update(ch.id!, { logicCheckLog: reviewAcc });
           if (activeChapterId === ch.id) setLogicReviewOutput(reviewAcc);
         }
@@ -649,26 +783,28 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       const sampleText = latestChapters.slice(0, 3).map(c => c.content).join('\n\n');
       const blurbComp = compileBlurbPrompt(currentOutline, sampleText, blurbSkill);
       let blurbAcc = '';
-      await runLLMStream('marketing', blurbComp.system, blurbComp.user, tok => { blurbAcc += tok; setBlurbsOutput(blurbAcc); });
+      await runLLMStream('marketing', blurbComp.system, blurbComp.user, tok => { blurbAcc += tok; setBlurbsOutput(blurbAcc); }, streamOptions);
       checkPause();
 
       // 生成书名与封面
       setAutoProgress({ step: '生成书名与封面提示词', current: totalSteps, total: totalSteps });
       const titleComp = compileTitlePrompt(currentOutline);
       let titleAcc = '';
-      await runLLMStream('marketing', titleComp.system, titleComp.user, tok => { titleAcc += tok; });
+      await runLLMStream('marketing', titleComp.system, titleComp.user, tok => { titleAcc += tok; }, streamOptions);
       await db.projects.update(projectId, { titleCandidates: titleAcc });
       setTitleOutput(titleAcc);
 
       const coverComp = compileCoverPrompt(currentOutline, project.genre);
       let coverAcc = '';
-      await runLLMStream('marketing', coverComp.system, coverComp.user, tok => { coverAcc += tok; });
+      await runLLMStream('marketing', coverComp.system, coverComp.user, tok => { coverAcc += tok; }, streamOptions);
       await db.projects.update(projectId, { coverPrompt: coverAcc });
       setCoverPrompt(coverAcc);
 
       setAutoProgress({ step: '全部完成 ✓', current: totalSteps, total: totalSteps });
     } catch (e: any) {
-      if (e.message === '__PAUSED__') {
+      if (isPausedError(e)) {
+        wasPaused = true;
+        markTaskPaused('auto');
         setAutoProgress(prev => prev ? { ...prev, step: '已暂停（点击继续）' } : null);
       } else {
         alert(`自动流水线执行出错：${e.message}`);
@@ -677,6 +813,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     } finally {
       setIsAutoRunning(false);
       setIsGenerating(false);
+      finishGenerationTask('auto', wasPaused);
     }
   };
 
@@ -692,7 +829,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         <div className="flex items-center gap-3 flex-wrap">
           {/* 一键全自动按鈕 */}
           <button
-            onClick={handleRunAutoPipeline}
+            onClick={() => handleRunAutoPipeline()}
             disabled={isGenerating || isAutoRunning}
             className="flex items-center gap-1.5 bg-grove hover:bg-grove-muted disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 transition"
           >
@@ -730,93 +867,11 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         </div>
       </div>
 
-      <div className="bg-paper-50 border border-rule p-4 space-y-3">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <div className="text-xs font-bold text-ink flex items-center gap-1.5">
-              <Cpu size={14} className="text-accent" /> 阶段模型
-            </div>
-            <p className="text-[10px] text-ink-400 mt-0.5">每个阶段可独立选择供应商与模型，立即保存到本地配置。</p>
-          </div>
-          <span className="text-[10px] text-ink-400 bg-paper border border-rule px-2 py-1 font-semibold">
-            输出 token 默认不限制
-          </span>
+      {pauseMessage && pausedTask && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-2 text-xs font-semibold flex items-center gap-2">
+          <Pause size={14} /> {pauseMessage}
         </div>
-
-        <div className="space-y-3">
-          {/* Stage tabs */}
-          <div className="flex gap-0 border border-rule overflow-hidden">
-            {STAGE_MODEL_ITEMS.map(({ stage, label }) => {
-              const assigned = stageAssignments[stage];
-              const preset = getProviderPreset(assigned);
-              const isActive = activeStageTab === stage;
-              return (
-                <button
-                  key={stage}
-                  type="button"
-                  onClick={() => setActiveStageTab(stage)}
-                  className={`flex-1 px-3 py-2 text-xs font-semibold transition flex flex-col items-center gap-0.5 ${
-                    isActive
-                      ? 'bg-accent text-white'
-                      : 'bg-paper-50 text-ink-400 hover:text-ink hover:bg-paper'
-                  }`}
-                >
-                  <span>{label}</span>
-                  <span className={`text-[10px] font-mono font-normal ${
-                    isActive ? 'text-white/80' : 'text-accent'
-                  }`}>{preset.shortName}</span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* Active stage detail */}
-          {(() => {
-            const stage = activeStageTab;
-            const assignedProvider = stageAssignments[stage];
-            const config = stageConfigs[stage] ?? getConfigForStage(stage);
-            const preset = getProviderPreset(assignedProvider);
-            return (
-              <div className="bg-paper border border-rule p-3 space-y-2">
-                <select
-                  value={assignedProvider}
-                  onChange={(event) => handlePipelineStageProviderChange(stage, event.target.value as LLMProviderId)}
-                  className="w-full bg-paper-50 border border-rule px-2 py-1.5 text-xs text-ink focus:outline-none focus:ring-1 focus:ring-accent"
-                  disabled={isGenerating || isAutoRunning}
-                >
-                  {PROVIDER_PRESETS.map(provider => (
-                    <option key={provider.id} value={provider.id}>{provider.name}</option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={config.model}
-                  onChange={(event) => handlePipelineStageModelChange(stage, event.target.value)}
-                  className="w-full bg-paper-50 border border-rule px-2 py-1.5 text-xs text-ink font-mono focus:outline-none focus:ring-1 focus:ring-accent"
-                  disabled={isGenerating || isAutoRunning}
-                />
-                <div className="flex flex-wrap gap-1.5">
-                  {preset.modelSuggestions.slice(0, 3).map(model => (
-                    <button
-                      type="button"
-                      key={model}
-                      onClick={() => handlePipelineStageModelChange(stage, model)}
-                      disabled={isGenerating || isAutoRunning}
-                      className={`text-[10px] px-2 py-0.5 border font-semibold transition disabled:opacity-50 ${
-                        config.model === model
-                          ? 'bg-accent text-white border-accent'
-                          : 'bg-paper-50 text-ink-400 border-rule hover:text-ink hover:border-rule-dark'
-                      }`}
-                    >
-                      {model}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      </div>
+      )}
 
       {/* 自动流水线进度条 */}
       {(isAutoRunning || autoProgress) && (
@@ -840,14 +895,14 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           </div>
           {isAutoRunning ? (
             <button
-              onClick={() => { autoPauseRef.current = true; }}
+              onClick={pauseCurrentTask}
               className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 transition shrink-0"
             >
               <Pause size={12} /> 暂停
             </button>
           ) : autoProgress?.step !== '全部完成 ✓' && autoProgress && (
             <button
-              onClick={() => { autoPauseRef.current = false; handleRunAutoPipeline(); }}
+              onClick={() => { autoPauseRef.current = false; handleRunAutoPipeline(true); }}
               className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-bold px-3 py-1.5 transition shrink-0"
             >
               <Play size={12} /> 继续
@@ -904,12 +959,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                     </button>
                     <button
                       disabled={isGenerating}
-                      onClick={handleGenerateOutline}
+                      onClick={() => handleGenerateOutline()}
                       className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 flex items-center gap-1.5 transition"
                     >
                       <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
                       {project.outline ? '重新生成' : '生成大纲'}
                     </button>
+                    {renderTaskControl('outline', () => handleGenerateOutline(true))}
                   </div>
                 </div>
 
@@ -1112,15 +1168,20 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                         <FileSearch size={12} className={isGenerating ? 'animate-spin' : ''} />
                         逻辑审查
                       </button>
+                      {renderTaskControl('review', () => {
+                        const ch = chapters.find(c => c.id === activeChapterId);
+                        if (ch) handleLogicReviewChapter(ch, true);
+                      })}
 
                       <button
                         disabled={isGenerating}
-                        onClick={handleGenerateChapterStream}
+                        onClick={() => handleGenerateChapterStream()}
                         className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs px-3.5 py-1.5 flex items-center gap-1.5 transition font-bold"
                       >
                         <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
                         生成正文
                       </button>
+                      {renderTaskControl('chapter', () => handleGenerateChapterStream(true))}
                     </div>
                     {chapterError && (
                       <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 px-3 py-2 leading-relaxed">
@@ -1284,12 +1345,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   </h3>
                   <button
                     disabled={isGenerating}
-                    onClick={handleGenerateMarketingKit}
+                    onClick={() => handleGenerateMarketingKit()}
                     className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 flex items-center gap-1.5 transition"
                   >
                     <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
                     一键生成推广素材
                   </button>
+                  {renderTaskControl('marketing', () => handleGenerateMarketingKit(true))}
                 </div>
 
                 <div className="flex-1">
@@ -1335,24 +1397,12 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 </h3>
                 <button
                   disabled={isGenerating}
-                  onClick={async () => {
-                    setIsGenerating(true);
-                    setTitleOutput('');
-                    try {
-                      const comp = compileTitlePrompt(project.outline);
-                      let acc = '';
-                      await runLLMStream('marketing', comp.system, comp.user, tok => { acc += tok; setTitleOutput(acc); });
-                      await db.projects.update(projectId, { titleCandidates: acc });
-                    } catch (e: any) {
-                      alert(`书名生成失败：${e.message}`);
-                    } finally {
-                      setIsGenerating(false);
-                    }
-                  }}
+                  onClick={() => handleGenerateTitleCandidates()}
                   className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
                 >
                   <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} /> 生成书名
                 </button>
+                {renderTaskControl('title', () => handleGenerateTitleCandidates(true))}
               </div>
               {titleOutput ? (
                 <div className="space-y-2">

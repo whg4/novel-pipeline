@@ -27,6 +27,13 @@ const DEFAULT_STAGE_ASSIGNMENTS: StageAssignments = {
 
 type StreamTokenHandler = (text: string) => void;
 
+export const LLM_PAUSED_ERROR = '__PAUSED__';
+
+export interface LLMStreamOptions {
+  signal?: AbortSignal;
+  shouldPause?: () => boolean;
+}
+
 export interface OutlineChecklistPromptItem {
   key: OutlineChecklistKey;
   title: string;
@@ -211,6 +218,7 @@ async function consumeEventStream(
   response: Response,
   onToken: StreamTokenHandler,
   extractor: (payload: unknown) => string,
+  options?: LLMStreamOptions,
 ): Promise<string> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('浏览器无法读取模型返回流。');
@@ -220,7 +228,9 @@ async function consumeEventStream(
   let buffer = '';
 
   while (true) {
+    assertStreamActive(options);
     const { done, value } = await reader.read();
+    assertStreamActive(options);
     if (done) break;
 
     buffer += decoder.decode(value, { stream: true });
@@ -253,7 +263,10 @@ async function handleResponse(
   response: Response,
   onToken: StreamTokenHandler,
   extractor: (payload: unknown) => string,
+  options?: LLMStreamOptions,
 ): Promise<string> {
+  assertStreamActive(options);
+
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`接口请求失败（${response.status}）：${text || response.statusText}`);
@@ -263,7 +276,7 @@ async function handleResponse(
 
   // 明确是 SSE 流式响应
   if (contentType.includes('text/event-stream')) {
-    return consumeEventStream(response, onToken, extractor);
+    return consumeEventStream(response, onToken, extractor, options);
   }
 
   // 明确是 JSON 响应（非流式）
@@ -279,6 +292,7 @@ async function handleResponse(
   // 尝试按 SSE 行格式解析
   let accumulated = '';
   for (const line of raw.split('\n')) {
+    assertStreamActive(options);
     const clean = line.trim();
     if (!clean || clean === 'data: [DONE]' || clean.startsWith('event:')) continue;
     const jsonText = clean.startsWith('data: ') ? clean.slice(6) : clean;
@@ -308,16 +322,28 @@ async function handleResponse(
   }
 }
 
+  function assertStreamActive(options?: LLMStreamOptions) {
+    if (options?.signal?.aborted || options?.shouldPause?.()) {
+      throw new Error(LLM_PAUSED_ERROR);
+    }
+  }
+
+  function isAbortError(error: unknown): boolean {
+    return error instanceof DOMException && error.name === 'AbortError';
+  }
+
 async function runOpenAICompatibleStream(
   config: APIConfig,
   systemPrompt: string,
   userPrompt: string,
   onToken: StreamTokenHandler,
+  options?: LLMStreamOptions,
 ): Promise<string> {
   const url = buildUrl(config.baseUrl, '/chat/completions');
 
   const response = await fetch(url, {
     method: 'POST',
+    signal: options?.signal,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${config.apiKey}`,
@@ -335,7 +361,7 @@ async function runOpenAICompatibleStream(
     }),
   });
 
-  return handleResponse(response, onToken, extractOpenAIText);
+  return handleResponse(response, onToken, extractOpenAIText, options);
 }
 
 async function runAnthropicMessagesStream(
@@ -343,11 +369,13 @@ async function runAnthropicMessagesStream(
   systemPrompt: string,
   userPrompt: string,
   onToken: StreamTokenHandler,
+  options?: LLMStreamOptions,
 ): Promise<string> {
   const url = buildUrl(config.baseUrl, '/messages');
 
   const response = await fetch(url, {
     method: 'POST',
+    signal: options?.signal,
     headers: {
       'Content-Type': 'application/json',
       'x-api-key': config.apiKey,
@@ -367,7 +395,7 @@ async function runAnthropicMessagesStream(
     }),
   });
 
-  return handleResponse(response, onToken, extractAnthropicText);
+  return handleResponse(response, onToken, extractAnthropicText, options);
 }
 
 async function runGeminiStream(
@@ -375,6 +403,7 @@ async function runGeminiStream(
   systemPrompt: string,
   userPrompt: string,
   onToken: StreamTokenHandler,
+  options?: LLMStreamOptions,
 ): Promise<string> {
   const baseUrl = config.baseUrl.replace(/\/$/, '');
   const fallbackModels = getProviderPreset('gemini').modelSuggestions;
@@ -382,11 +411,13 @@ async function runGeminiStream(
   let modelNotFoundError = '';
 
   for (const modelName of modelsToTry) {
+    assertStreamActive(options);
     const model = encodeURIComponent(modelName);
     const url = `${baseUrl}/models/${model}:streamGenerateContent?key=${encodeURIComponent(config.apiKey)}&alt=sse`;
 
     const response = await fetch(url, {
       method: 'POST',
+      signal: options?.signal,
       headers: {
         'Content-Type': 'application/json',
         ...(config.extraHeaders ?? {}),
@@ -408,7 +439,7 @@ async function runGeminiStream(
     });
 
     if (response.ok) {
-      return handleResponse(response, onToken, extractGeminiText);
+      return handleResponse(response, onToken, extractGeminiText, options);
     }
 
     const errorText = await response.text();
@@ -428,9 +459,11 @@ async function runLocalRelayStream(
   systemPrompt: string,
   userPrompt: string,
   onToken: StreamTokenHandler,
+  options?: LLMStreamOptions,
 ): Promise<string> {
   const response = await fetch(config.baseUrl, {
     method: 'POST',
+    signal: options?.signal,
     headers: {
       'Content-Type': 'application/json',
       ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
@@ -446,7 +479,7 @@ async function runLocalRelayStream(
     }),
   });
 
-  return handleResponse(response, onToken, extractRelayText);
+  return handleResponse(response, onToken, extractRelayText, options);
 }
 
 async function runLLMStreamWithConfig(
@@ -454,24 +487,34 @@ async function runLLMStreamWithConfig(
   systemPrompt: string,
   userPrompt: string,
   onToken: StreamTokenHandler,
+  options?: LLMStreamOptions,
 ): Promise<string> {
   const normalizedConfig = normalizeConfig(config);
+
+  assertStreamActive(options);
 
   if (!normalizedConfig.apiKey && normalizedConfig.apiStyle !== 'local-relay') {
     throw new Error('请先在“模型连接”页面填写 API 密钥。');
   }
 
-  switch (normalizedConfig.apiStyle) {
-    case 'openai-compatible':
-      return runOpenAICompatibleStream(normalizedConfig, systemPrompt, userPrompt, onToken);
-    case 'anthropic-messages':
-      return runAnthropicMessagesStream(normalizedConfig, systemPrompt, userPrompt, onToken);
-    case 'gemini-generate-content':
-      return runGeminiStream(normalizedConfig, systemPrompt, userPrompt, onToken);
-    case 'local-relay':
-      return runLocalRelayStream(normalizedConfig, systemPrompt, userPrompt, onToken);
-    default:
-      throw new Error('当前模型供应商暂未配置可用的调用适配器。');
+  try {
+    switch (normalizedConfig.apiStyle) {
+      case 'openai-compatible':
+        return runOpenAICompatibleStream(normalizedConfig, systemPrompt, userPrompt, onToken, options);
+      case 'anthropic-messages':
+        return runAnthropicMessagesStream(normalizedConfig, systemPrompt, userPrompt, onToken, options);
+      case 'gemini-generate-content':
+        return runGeminiStream(normalizedConfig, systemPrompt, userPrompt, onToken, options);
+      case 'local-relay':
+        return runLocalRelayStream(normalizedConfig, systemPrompt, userPrompt, onToken, options);
+      default:
+        throw new Error('当前模型供应商暂未配置可用的调用适配器。');
+    }
+  } catch (error) {
+    if (options?.signal?.aborted || isAbortError(error)) {
+      throw new Error(LLM_PAUSED_ERROR);
+    }
+    throw error;
   }
 }
 
@@ -480,8 +523,9 @@ export async function runLLMStream(
   systemPrompt: string,
   userPrompt: string,
   onToken: StreamTokenHandler,
+  options?: LLMStreamOptions,
 ): Promise<string> {
-  return runLLMStreamWithConfig(getConfigForStage(stage), systemPrompt, userPrompt, onToken);
+  return runLLMStreamWithConfig(getConfigForStage(stage), systemPrompt, userPrompt, onToken, options);
 }
 
 export async function testLLMConnection(config: APIConfig): Promise<LLMConnectionTestResult> {

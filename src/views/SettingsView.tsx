@@ -1,12 +1,10 @@
 import { useState } from 'react';
-import { AlertTriangle, Check, Cpu, Key, Loader2, Save, Server, ShieldCheck, Sparkles, Workflow } from 'lucide-react';
-import { APIConfig, LLMConnectionTestResult, LLMProviderId, StageAssignments, StageRole } from '../types';
+import { AlertTriangle, Check, Cpu, Key, Loader2, Save, Server, ShieldCheck, Sparkles } from 'lucide-react';
+import { APIConfig, LLMConnectionTestResult, LLMProviderId } from '../types';
 import {
   getProviderConfig,
   saveProviderConfig,
   getProviderConfigs,
-  getStageAssignments,
-  saveStageAssignments,
   testLLMConnection,
 } from '../services/llm';
 import { getProviderPreset, PROVIDER_PRESETS } from '../services/providers';
@@ -23,22 +21,11 @@ const supportClass = {
   'relay-only': 'border-sky-200 bg-sky-50 text-sky-700',
 } as const;
 
-const stageLabels: Record<StageRole, string> = {
-  outline: '大纲生成',
-  chapter: '正文写作',
-  review: '逻辑审查',
-  marketing: '营销素材（简介 / 书名 / 封面）',
-};
-
 export default function SettingsView() {
-  const [config, setConfig] = useState<APIConfig>(() => {
-    const assignments = getStageAssignments();
-    return getProviderConfig(assignments.outline);
-  });
+  const [config, setConfig] = useState<APIConfig>(() => getProviderConfig('deepseek'));
   const [savedMessage, setSavedMessage] = useState('');
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<LLMConnectionTestResult | null>(null);
-  const [stageAssignments, setStageAssignments] = useState<StageAssignments>(getStageAssignments());
   const [configuredProviders, setConfiguredProviders] = useState<LLMProviderId[]>(
     () => Object.keys(getProviderConfigs()) as LLMProviderId[],
   );
@@ -59,14 +46,9 @@ export default function SettingsView() {
   const handleSave = (event: React.FormEvent) => {
     event.preventDefault();
     saveProviderConfig(config);
-    saveStageAssignments(stageAssignments);
     setConfiguredProviders(Object.keys(getProviderConfigs()) as LLMProviderId[]);
-    setSavedMessage('已保存。该供应商的密钥独立存储，各阶段按指派调用对应模型。');
+    setSavedMessage('已保存。该供应商的密钥独立存储，阶段分配请到“阶段模型”中调整。');
     setTimeout(() => setSavedMessage(''), 3000);
-  };
-
-  const handleStageAssignmentChange = (stage: StageRole, provider: LLMProviderId) => {
-    setStageAssignments((prev) => ({ ...prev, [stage]: provider }));
   };
 
   const handleTestConnection = async () => {
@@ -86,7 +68,7 @@ export default function SettingsView() {
         <div>
           <h1 className="text-xl font-black font-display">模型连接</h1>
           <p className="text-ink-500 text-xs">
-            每个供应商单独保存密钥（互不共享），并可为不同工作流阶段指派不同模型。密钥只保存在你的浏览器本地。
+            每个供应商单独保存密钥（互不共享）。阶段分配与具体模型请在“阶段模型”中调整。密钥只保存在你的浏览器本地。
           </p>
         </div>
       </div>
@@ -274,39 +256,6 @@ export default function SettingsView() {
         </form>
       </div>
 
-      {/* 阶段模型指派 */}
-      <div className="bg-paper-50 border border-rule p-6 space-y-4">
-        <div className="flex items-center gap-2 text-sm font-bold text-ink">
-          <Workflow size={16} className="text-accent" /> 阶段模型指派
-        </div>
-        <p className="text-xs text-ink-500 leading-relaxed">
-          为每个工作流阶段指定使用的供应商。需先在上方为对应供应商保存好密钥，再点击下方「保存配置」生效。
-        </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {(Object.keys(stageLabels) as StageRole[]).map((stage) => (
-            <div key={stage} className="space-y-1.5">
-              <label className="text-xs font-bold text-ink-600 uppercase tracking-wider">
-                {stageLabels[stage]}
-              </label>
-              <select
-                value={stageAssignments[stage]}
-                onChange={(event) => handleStageAssignmentChange(stage, event.target.value as LLMProviderId)}
-                className="w-full bg-paper-50 border border-rule px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/50"
-              >
-                {PROVIDER_PRESETS.map((preset) => (
-                  <option key={preset.id} value={preset.id}>
-                    {preset.name}
-                    {configuredProviders.includes(preset.id) ? '（已配置）' : '（未配置密钥）'}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ))}
-        </div>
-        <p className="text-[11px] text-ink-400">
-          指派会随上方「保存配置」一并保存。
-        </p>
-      </div>
     </div>
   );
 }
