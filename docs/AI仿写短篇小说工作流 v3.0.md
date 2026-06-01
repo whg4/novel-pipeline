@@ -40,7 +40,7 @@
 
 * 正文（可选）
 
-* 简介skill [《🎯 爆款网文简介（导语）生成 Skill v4.1》](https://alidocs.dingtalk.com/i/nodes/pGBa2Lm8aGz44rgaTERmald2VgN7R35y?utm_scene=person_space)
+* 简介skill -《🎯 爆款网文简介（导语）生成 Skill v4.1》
 
 #### 书名
 
