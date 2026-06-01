@@ -895,7 +895,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       autoState.totalSteps = totalSteps;
 
       if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.review) {
-        const startIndex = autoState.phase === 'chapter' || autoState.phase === 'review' ? autoState.chapterIndex : 0;
+        // If resuming a paused run use the saved index; otherwise find the first chapter
+        // that still needs drafting or a logic review so we skip already-completed chapters.
+        const startIndex = (
+          autoState.phase === 'chapter' || autoState.phase === 'review'
+        ) ? autoState.chapterIndex : (() => {
+          const firstIncomplete = allChapters.findIndex(
+            ch => !ch.content || ch.content.length < 100 || !ch.logicCheckLog
+          );
+          return firstIncomplete === -1 ? allChapters.length : firstIncomplete;
+        })();
         for (let i = startIndex; i < allChapters.length; i++) {
           const ch = allChapters[i];
           const prevChs = allChapters.slice(0, i);
@@ -928,16 +937,18 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
           setAutoProgress({ step: `审查第 ${ch.chapterNumber} 章逻辑`, current: 2 + i * 2 + 2, total: totalSteps });
           const content = allChapters[i].content;
-          if (content && logicSkill) {
-            const resumingReview = resume && autoState.phase === 'review' && autoState.chapterIndex === i && autoState.partialText;
+          const resumingReview = resume && autoState.phase === 'review' && autoState.chapterIndex === i && !!autoState.partialText;
+          const needsReview = resumingReview || !allChapters[i].logicCheckLog;
+          if (content && logicSkill && needsReview) {
+            const _resumingReview = resumingReview; // alias to avoid re-declaration below
             autoState.phase = 'review';
             autoState.chapterIndex = i;
             autoState.chapterId = ch.id;
             const reviewComp = compileLogicReviewPrompt(content, ch.chapterNumber, logicSkill);
-            if (resumingReview) {
+            if (_resumingReview) {
               reviewComp.user += `\n--- 已生成但暂停的审查片段 ---\n${autoState.partialText}\n\n请从该片段后继续补全审查报告，不要重复已经输出的部分。`;
             }
-            let reviewAcc = resumingReview ? autoState.partialText : '';
+            let reviewAcc = _resumingReview ? autoState.partialText : '';
             await runLLMStream('review', reviewComp.system, reviewComp.user, tok => {
               reviewAcc += tok;
               autoState.partialText = reviewAcc;
