@@ -876,18 +876,28 @@ ${chapterContent}
 }
 
 // Compile book title candidates prompt
-export function compileTitlePrompt(outline: string): { system: string; user: string } {
-  const system = `你是一位专精爆款网文书名创作的专家。书名要简洁有力、带强烈情绪张力、适合在各平台传播，使用大众易懂词汇，避免生僻或高大上词汇。`;
+export function compileTitlePrompt(outline: string, customHint?: string): { system: string; user: string } {
+  const system = `你是一位专精爆款网文（爽文）书名创作的专家。书名要简洁有力、带强烈情绪张力、适合在各平台传播，使用大众易懂词汇，避免生僻或高大上词汇。`;
+
+  const customSection = customHint?.trim()
+    ? `\n用户额外要求：${customHint.trim()}\n`
+    : '';
 
   const user = `
 --- 以下是本书的完整大纲 ---
 ${outline}
+${customSection}
+请根据上述大纲，生成 8 组爽文风格备选书名，每组包含：
+- 中文书名（带《》）
+- 对应英文书名（适合国际平台，简洁有力）
+- 一句不超过 20 字的推荐理由
 
-请根据上述大纲，生成 8 个备选书名，风格多样（含霸气型、暧昧拉扯型、悬念型），每个书名后附一句不超过 20 字的推荐理由。
-输出格式：
-1. 《书名》——理由
-2. 《书名》——理由
-...（共 8 个）
+风格要多样，涵盖：霸气型、打脸爽型、暧昧拉扯型、悬念型。
+
+输出格式（严格按此，不要额外说明）：
+1. 《中文书名》／ English Title ——理由
+2. 《中文书名》／ English Title ——理由
+...（共 8 组）
 `;
 
   return { system, user };

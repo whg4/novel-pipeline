@@ -255,6 +255,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [blurbsOutput, setBlurbsOutput] = useState('');
   const [coverPrompt, setCoverPrompt] = useState('');
   const [titleOutput, setTitleOutput] = useState('');
+  const [titleCustomPrompt, setTitleCustomPrompt] = useState('');
 
   // 封面图片生成
   const [coverImagePrompt, setCoverImagePrompt] = useState('');
@@ -734,7 +735,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     let wasPaused = false;
 
     try {
-      const comp = compileTitlePrompt(project.outline);
+      const comp = compileTitlePrompt(project.outline, titleCustomPrompt);
       await runLLMStream('marketing', comp.system, comp.user, tok => {
         acc += tok;
         setTitleOutput(acc);
@@ -1498,8 +1499,15 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               {/* 生成备选书名 */}
               <div className="bg-paper-50 border border-rule p-4 space-y-3">
                 <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                  <Type size={13} className="text-accent" /> 备选书名
+                  <Type size={13} className="text-accent" /> 备选书名（中英双语）
                 </h3>
+                <textarea
+                  value={titleCustomPrompt}
+                  onChange={e => setTitleCustomPrompt(e.target.value)}
+                  rows={2}
+                  placeholder='可选：自定要求，如"侧重打脸爽、带权谋感、主角是医女"…'
+                  className="w-full bg-paper border border-rule p-2 font-mono text-[10px] text-ink resize-none focus:outline-none focus:border-accent"
+                />
                 <button
                   disabled={isGenerating || !project.outline}
                   onClick={() => handleGenerateTitleCandidates()}
@@ -1513,7 +1521,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   <textarea
                     readOnly
                     value={titleOutput || project.titleCandidates || ''}
-                    rows={5}
+                    rows={8}
                     className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:outline-none leading-relaxed resize-none"
                   />
                 )}
