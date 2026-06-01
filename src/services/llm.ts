@@ -267,11 +267,6 @@ async function handleResponse(
   }
 }
 
-// Newer OpenAI models (o1, o3, o4, gpt-5+) require max_completion_tokens instead of max_tokens
-function useCompletionTokens(model: string): boolean {
-  return /^(o\d|gpt-5)/i.test(model);
-}
-
 async function runOpenAICompatibleStream(
   config: APIConfig,
   systemPrompt: string,
@@ -295,9 +290,6 @@ async function runOpenAICompatibleStream(
         { role: 'user', content: userPrompt },
       ],
       temperature: config.temperature,
-      ...(useCompletionTokens(config.model)
-        ? { max_completion_tokens: config.maxTokens }
-        : { max_tokens: config.maxTokens }),
       stream: true,
     }),
   });
@@ -324,7 +316,7 @@ async function runAnthropicMessagesStream(
     },
     body: JSON.stringify({
       model: config.model,
-      max_tokens: config.maxTokens,
+      max_tokens: 65536,
       temperature: config.temperature,
       system: systemPrompt,
       messages: [
@@ -365,7 +357,6 @@ async function runGeminiStream(
       ],
       generationConfig: {
         temperature: config.temperature,
-        maxOutputTokens: config.maxTokens,
       },
     }),
   });
@@ -392,7 +383,6 @@ async function runLocalRelayStream(
       systemPrompt,
       userPrompt,
       temperature: config.temperature,
-      maxTokens: config.maxTokens,
       stream: true,
     }),
   });

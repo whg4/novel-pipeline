@@ -9,7 +9,7 @@ import {
 import { 
   Sparkles, BookOpen, Layers, Edit3, 
   CheckSquare, Plus, Save, Copy, 
-  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon
+  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download
 } from 'lucide-react';
 
 interface PipelineViewProps {
@@ -597,13 +597,28 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       {pipelineTab === 'outline' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
-            <div className="bg-paper-50 border border-rule p-5 space-y-4 flex flex-col justify-between min-h-[500px]">
-              <div className="space-y-3">
-                <div className="flex justify-between items-center pb-2 border-b border-rule">
+            <div className="bg-paper-50 border border-rule p-5 flex flex-col h-[calc(100vh-240px)]">
+              <div className="flex-1 flex flex-col gap-3 min-h-0">
+                <div className="flex justify-between items-center pb-2 border-b border-rule shrink-0">
                   <h3 className="text-sm font-bold text-ink flex items-center gap-1.5">
                     <Layers size={15} className="text-accent" /> 大纲编辑
                   </h3>
                   <div className="flex items-center gap-2">
+                    <button
+                      disabled={!project.outline}
+                      onClick={() => {
+                        const blob = new Blob([project.outline], { type: 'text/markdown' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `${project.title || '大纲'}.md`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      }}
+                      className="bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
+                    >
+                      <Download size={12} /> 导出 MD
+                    </button>
                     <button
                       disabled={isGenerating}
                       onClick={async () => {
@@ -625,7 +640,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   </div>
                 </div>
 
-                <div className="flex-1">
+                <div className="flex-1 min-h-0">
                   {isGenerating && !generationOutput ? (
                     <div className="flex flex-col items-center justify-center py-20 text-ink-400 space-y-2">
                       <RefreshCw size={24} className="animate-spin text-ink-300" />
@@ -635,7 +650,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                     <textarea
                       value={isGenerating ? generationOutput : project.outline}
                       onChange={(e) => handleUpdateOutlineManual(e.target.value)}
-                      className="w-full h-[400px] bg-paper border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                      className="w-full h-full bg-paper border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
                       placeholder="大纲将在此生成。填写背景、人物设定与参考模板后，点击「生成大纲」..."
                     />
                   )}
