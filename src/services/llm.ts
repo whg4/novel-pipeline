@@ -693,37 +693,24 @@ export function compileOutlinePrompt(
   wolfSkill?: string,
   slapSkill?: string
 ): { system: string; user: string } {
-  const system = `You are a high-level creative writing AI that specializes in drafting best-selling web novel outlines. 
-You must strictly follow the provided "仿写大纲输出格式模板 v3.0" rules.
-Your outline structure must follow this format:
-- 名词下沉 (No high-tech/AI jargon, use grounded real-world items).
-- 1:1 Rhythm & Tension mapping of the reference example.
-- Character lists and roles.
-- Act structured chapters with explicit goals.${wolfSkill ? `
+  const system = `你是一位精通网文创作的资深编辑，专门进行仿写大纲生成。严格遵循以下规则。
 
---- WEREWOLF WORLD SETTINGS (Classic Tribal Code) ---
-${wolfSkill}` : ''}${slapSkill ? `
-
---- FEMALE PROTAGONIST CLIMAX / SLAPBACK (打脸闭环) ---
-${slapSkill}` : ''}`;
-
-  const user = `
---- TEMPLATE SYSTEM GUIDELINES ---
+--- 大纲输出格式模板 ---
 ${templateSkill}
+${wolfSkill ? `\n--- 欧美狼人世界设定 ---\n${wolfSkill}` : ''}${slapSkill ? `\n--- 大女主打脸闭环技法 ---\n${slapSkill}` : ''}`;
 
---- NEW PROJECT SPECIFICATIONS ---
-- Background Setting:
-${background || 'Standard background'}
+  const user = `《例文》是例文。我需要你根据《大纲skill》生成仿写例文的大纲。${wolfSkill ? '此小说是欧美狼人背景，无玄幻魔法元素，参照《欧美狼人skill》。' : ''}
 
-- Character Settings:
-${characters || 'Standard characters'}
+--- 项目背景 ---
+${background || '未填写'}
 
---- REFERENCE EXAMPLE STORY (To imitate 1:1 in tension & emotion line) ---
+--- 人物设定 ---
+${characters || '未填写'}
+
+--- 参考例文 ---
 ${example}
 
-${validationFeedback ? `--- REVISION SUGGESTIONS TO ADDRESS ---\n${validationFeedback}\n` : ''}
-
-Generate a beautiful, comprehensive, and highly-detailed novel outline corresponding exactly to the template rules above.
+${validationFeedback ? `--- 修改建议（请根据以下建议调整大纲）---\n${validationFeedback}\n` : ''}请生成完整的仿写大纲。
 `;
 
   return { system, user };
@@ -759,60 +746,72 @@ Provide your review in Chinese. Be specific and actionable with each suggestion.
 }
 
 // Compile final chapter drafting prompt
-export function compileChapterPrompt(
-  outline: string,
-  chapterNum: number,
-  chapterOutline: string,
-  previousChapters: Chapter[],
-  skills: { key: string; content: string }[],
-  isWerewolf: boolean,
-  isFemaleSlap: boolean,
-  regenerationPrompt?: string
-): { system: string; user: string } {
+export function compileChapterPrompt({
+  outline,
+  chapterNum,
+  chapterOutline,
+  previousChapters,
+  skills,
+  regenerationPrompt,
+  extraSkillKeys = [],
+  extraSkillText = '',
+}: {
+  outline: string;
+  chapterNum: number;
+  chapterOutline: string;
+  previousChapters: Chapter[];
+  skills: { key: string; content: string }[];
+  regenerationPrompt?: string;
+  extraSkillKeys?: string[];
+  extraSkillText?: string;
+}): { system: string; user: string } {
   const degreaseSkill = skills.find(s => s.key === 'degrease')?.content || '';
   const connectSkill = skills.find(s => s.key === 'connect_skills')?.content || '';
   const logicCheckSkill = skills.find(s => s.key === 'logic_check')?.content || '';
-  const werewolfSkill = isWerewolf ? (skills.find(s => s.key === 'wolf_setting')?.content || '') : '';
-  const femaleSlapSkill = isFemaleSlap ? (skills.find(s => s.key === 'female_slap')?.content || '') : '';
+  const extraSkillContents = extraSkillKeys
+    .map(k => skills.find(s => s.key === k)?.content || '')
+    .filter(Boolean);
 
-  const system = `You are an elite novelist. You are about to draft Chapter ${chapterNum} of a highly anticipated novel based on the strict outline instructions.
-You must adhere 100% to the following style and mechanics rules.
+  const system = `你是一位顶级网文小说作家，即将根据大纲写第 ${chapterNum} 章。严格遵循以下规则。
 
---- WRITING RULE: AI去油法则 (Anti-Grease Rules) ---
+《大纲》是大纲。《AI去油》是写作手法约束。《串联》是你写小说需要执行的要求。
+
+--- 《AI去油法则》（写作手法约束）---
 ${degreaseSkill}
 
---- CONNECTION RULES & FLOW ---
+--- 《串联》（章节衔接要求）---
 ${connectSkill}
 
-${logicCheckSkill ? `\n--- 逻辑一致性规则（写作过程中随时自查，不在正文中输出）---\n${logicCheckSkill}` : ''}
-${isWerewolf ? `\n--- WEREWOLF WORLD SETTINGS (Classic Tribal Code) ---\n${werewolfSkill}` : ''}
-${isFemaleSlap ? `\n--- FEMALE PROTAGONIST CLIMAX / SLAPBACK (打脸闭环) ---\n${femaleSlapSkill}` : ''}
+--- 《逻辑审查》（写作过程中内部自检，不输出到正文）---
+${logicCheckSkill}
+${extraSkillContents.length > 0 ? `\n--- 补充 Skill ---\n${extraSkillContents.join('\n\n')}` : ''}
+${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}
 
-CRITICAL DIRECTIVES:
-1. Write the chapter directly using clean, active verbiage, natural pacing, and sharp imagery.
-2. Direct-to-draft format: Output the clean narrative text FIRST.
-3. At the very end of your response, draw a clear horizontal separator "---" followed by your logical review list based on check procedures (Time, Place, Items, Behaviors).
-4. Strictly avoid god-view statements ("he didn't know that...", "little did she suspect...") or professional techniques jargon in the actual narrative text.`;
+【输出规则】
+1. 直接以流畅正文叙述，不要引言、不要解释。
+2. 格式严格为：章节标题行 + 正文。
+3. 不输出任何自检清单、逻辑审查报告或元注释。逻辑审查只作为内部自检。
+4. 避免上帝视角（"他不知道的是..."）和专业术语注解。`;
 
-  let precedingContext = 'This is Chapter 1. Start from the very beginning.';
+  let precedingContext = '这是第 1 章，从头开始写。';
   if (previousChapters.length > 0) {
     const prev = previousChapters[previousChapters.length - 1];
     const prevText = prev.content;
-    const last300Words = prevText.length > 1000 ? prevText.substring(prevText.length - 1000) : prevText;
-    precedingContext = `The previous Chapter (${prev.chapterNumber}) ended with the following action/paragraph:\n"${last300Words}"\n\nYou MUST start Chapter ${chapterNum} seamlessly from this ending, providing an immediate physical or psychological continuity, ensuring no gap in space or time.`;
+    const lastPart = prevText.length > 1000 ? prevText.substring(prevText.length - 1000) : prevText;
+    precedingContext = `上一章（第 ${prev.chapterNumber} 章）结尾为：\n"${lastPart}"\n\n必须从此结尾无缝衔接，保证时间、空间和情绪的连续性，不留断层。`;
   }
 
   const user = `
---- COMPLETE BOOK OUTLINE ---
+--- 完整大纲 ---
 ${outline}
 
---- PREVIOUS CHAPTER DRAFT END-HOOK (Continuity context) ---
+--- 上一章结尾（衔接参考）---
 ${precedingContext}
 
---- TARGET CHAPTER ${chapterNum} OUTLINE & EVENTS ---
+--- 第 ${chapterNum} 章大纲及事件 ---
 ${chapterOutline}
 
-${regenerationPrompt?.trim() ? `--- USER REVISION / REGENERATION INSTRUCTIONS (高优先级) ---\n${regenerationPrompt.trim()}\n(以上修改建议优先于默认生成风格，但不得违背大纲事件、角色连续性和已设定事实。)\n\n` : ''}Write next chapter Chapter ${chapterNum} now. Begin straight in narrative form with the heading formatted exactly as: "### 第 ${chapterNum} 章: [章节名]"
+${regenerationPrompt?.trim() ? `--- 本章重写建议（高优先级）---\n${regenerationPrompt.trim()}\n（以上建议优先于默认生成风格，但不得违背大纲事件、角色连续性和已设定事实。）\n\n` : ''}根据上述要求，根据大纲，写小说第 ${chapterNum} 章。以"### 第 ${chapterNum} 章: [章节名]"开头，只输出标题和正文。
 `;
 
   return { system, user };

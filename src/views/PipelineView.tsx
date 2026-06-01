@@ -189,16 +189,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [editingDraft, setEditingContent] = useState('');
   const [chapterError, setChapterError] = useState<string | null>(null);
   const [greaseWarnings, setGreaseWarnings] = useState<string[]>([]);
-  const [draftChecklist, setDraftChecklist] = useState<Record<string, boolean>>({
-    timeline: false,
-    place: false,
-    item_consistent: false,
-    item_possession: false,
-    avoid_omniscience: false,
-    avoid_loop: false,
-    stitched_start: false
-  });
   const [chapterRegenerationPrompt, setChapterRegenerationPrompt] = useState('');
+  const [chapterExtraSkillKeys, setChapterExtraSkillKeys] = useState<string[]>([]);
+  const [chapterExtraSkillText, setChapterExtraSkillText] = useState('');
+  const [editingProjectTitle, setEditingProjectTitle] = useState('');
 
   // Load first chapter automatically on startup if none selected
   useEffect(() => {
@@ -351,15 +345,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setEditingOutline(ch.outlineSection);
     setEditingContent(ch.content);
     setChapterRegenerationPrompt(ch.regenerationPrompt || '');
-    setDraftChecklist({
-      timeline: false,
-      place: false,
-      item_consistent: false,
-      item_possession: false,
-      avoid_omniscience: false,
-      avoid_loop: false,
-      stitched_start: false
-    });
   };
 
   if (!project) {
@@ -538,19 +523,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     const prevChapters = chapters.filter(c => c.chapterNumber < (chapters.find(x => x.id === activeChapterId)?.chapterNumber || 0));
 
     try {
-      const isWerewolf = project.genre === 'classic-wolf';
-      const isFemaleSlap = project.genre === 'female-slap';
-
-      const compiled = compileChapterPrompt(
-        project.outline,
-        chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1,
-        editingOutline,
-        prevChapters,
+      const compiled = compileChapterPrompt({
+        outline: project.outline,
+        chapterNum: chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1,
+        chapterOutline: editingOutline,
+        previousChapters: prevChapters,
         skills,
-        isWerewolf,
-        isFemaleSlap,
-        chapterRegenerationPrompt
-      );
+        regenerationPrompt: chapterRegenerationPrompt,
+        extraSkillKeys: chapterExtraSkillKeys,
+        extraSkillText: chapterExtraSkillText,
+      });
 
       if (resume && accumulated) {
         compiled.user += `\n--- 已生成但被暂停的正文片段 ---\n${accumulated}\n\n请从该片段最后一句之后继续续写，只输出后续正文，不要重复已经写过的内容。`;
@@ -880,11 +862,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             autoState.phase = 'chapter';
             autoState.chapterIndex = i;
             autoState.chapterId = ch.id;
-            const chComp = compileChapterPrompt(
-              currentOutline, ch.chapterNumber, ch.outlineSection, prevChs,
-              skills, project.genre === 'classic-wolf', project.genre === 'female-slap',
-              ch.regenerationPrompt || ''
-            );
+            const chComp = compileChapterPrompt({
+              outline: currentOutline,
+              chapterNum: ch.chapterNumber,
+              chapterOutline: ch.outlineSection,
+              previousChapters: prevChs,
+              skills,
+              regenerationPrompt: ch.regenerationPrompt || '',
+              extraSkillKeys: ch.extraSkillKeys || [],
+              extraSkillText: ch.extraSkillText || '',
+            });
             if (resumingChapter) {
               chComp.user += `\n--- 已生成但暂停的正文片段 ---\n${autoState.partialText}\n\n请从该片段最后一句之后继续续写，只输出后续正文，不要重复已经写过的内容。`;
             }
@@ -1023,7 +1010,22 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       <div className="border-b-2 border-ink pb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
           <div className="text-[10px] font-bold text-ink-400 uppercase tracking-widest">当前项目</div>
-          <h1 className="text-xl font-black font-display text-ink mt-0.5">{project.title}</h1>
+          <input
+            type="text"
+            value={editingProjectTitle}
+            onChange={(e) => setEditingProjectTitle(e.target.value)}
+            onBlur={async () => {
+              const newTitle = editingProjectTitle.trim() || '未命名项目';
+              if (newTitle !== project.title) {
+                await db.projects.update(projectId, { title: newTitle });
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            }}
+            className="text-xl font-black font-display text-ink mt-0.5 bg-transparent border-b border-transparent hover:border-rule focus:border-accent focus:outline-none w-full max-w-xs"
+            placeholder="项目书名（点击编辑）"
+          />
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -1593,44 +1595,71 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               </div>
             </div>
 
-            {/* 2. Interactive Logic Checklist */}
-            <div className="bg-paper-50 border border-rule p-4 space-y-4">
-              <h3 className="text-xs font-bold text-accent uppercase tracking-widest flex items-center gap-1.5">
-                <CheckSquare size={13} /> 逻辑自查 v3.2
+            {/* 本章补充 Skill */}
+            <div className="bg-paper-50 border border-rule p-4 space-y-3">
+              <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                <Layers size={13} className="text-accent" /> 本章补充 Skill
               </h3>
-              <p className="text-[10px] text-ink-400 leading-normal">
-                对照《小说正文逻辑审查流程 v3.2》检查当前章节，逐项打勾确认：
-              </p>
-
-              <div className="space-y-2">
-                {[
-                  { key: 'timeline', label: '时间线审查 (时间锚点/转场完美咬合)' },
-                  { key: 'place', label: '地点/行程检测 (无突然瞬移、场景重置)' },
-                  { key: 'item_consistent', label: '道具名词同章绝对一致 (不突变)' },
-                  { key: 'item_possession', label: '取用路径完整 (角色确实拥有该物品)' },
-                  { key: 'avoid_omniscience', label: '严禁越界知道 (无越过信息的上帝视角)' },
-                  { key: 'avoid_loop', label: '无重伤下一秒活蹦乱跳/违背材质逻辑' },
-                  { key: 'stitched_start', label: '物理接合 (章开头与前尾无缝贴合并无断层)' }
-                ].map((item) => (
-                  <label
-                    key={item.key}
-                    className="flex items-start gap-2.5 bg-paper border border-rule hover:border-rule-dark p-2.5 cursor-pointer transition"
-                  >
+              <div className="space-y-1 max-h-40 overflow-y-auto border border-rule p-2 bg-paper">
+                {skills.filter(s => !['workflow', 'blurb'].includes(s.key)).map(s => (
+                  <label key={s.key} className="flex items-center gap-2 text-[11px] text-ink cursor-pointer py-0.5">
                     <input
                       type="checkbox"
-                      checked={draftChecklist[item.key]}
-                      onChange={(e) => setDraftChecklist({ ...draftChecklist, [item.key]: e.target.checked })}
-                      className="rounded accent-[#9b2d20] shrink-0 mt-0.5 cursor-pointer"
+                      checked={chapterExtraSkillKeys.includes(s.key)}
+                      onChange={(e) => {
+                        setChapterExtraSkillKeys(e.target.checked
+                          ? [...chapterExtraSkillKeys, s.key]
+                          : chapterExtraSkillKeys.filter(k => k !== s.key));
+                      }}
+                      className="rounded accent-[#9b2d20] shrink-0"
                     />
-                    <span className={`text-[11px] leading-tight ${
-                      draftChecklist[item.key] ? 'text-ink-400 line-through' : 'text-ink'
-                    }`}>
-                      {item.label}
-                    </span>
+                    <span className="truncate">{s.name}</span>
                   </label>
                 ))}
               </div>
+              <div className="flex items-center justify-between text-[10px] text-ink-400">
+                <span>或上传/粘贴临时 Skill（不进入全局库）：</span>
+                <label className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 font-bold px-2 py-0.5 cursor-pointer transition">
+                  <FileUp size={10} /> 上传
+                  <input
+                    type="file"
+                    accept=".txt,.md"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => setChapterExtraSkillText(ev.target?.result as string || '');
+                      reader.readAsText(file, 'utf-8');
+                      e.target.value = '';
+                    }}
+                  />
+                </label>
+              </div>
+              <textarea
+                value={chapterExtraSkillText}
+                onChange={(e) => setChapterExtraSkillText(e.target.value)}
+                rows={3}
+                className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                placeholder="粘贴临时 Skill 内容..."
+                disabled={activeChapterId === null}
+              />
+              <button
+                disabled={activeChapterId === null}
+                onClick={async () => {
+                  if (activeChapterId === null) return;
+                  await db.chapters.update(activeChapterId, {
+                    extraSkillKeys: chapterExtraSkillKeys,
+                    extraSkillText: chapterExtraSkillText,
+                  });
+                  alert('Skill 设置已保存。');
+                }}
+                className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-semibold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+              >
+                <Save size={11} /> 保存 Skill 设置
+              </button>
             </div>
+
           </div>
         </div>
       )}

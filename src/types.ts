@@ -50,6 +50,8 @@ export interface Chapter {
   preChaptersEndHook?: string; // Text to stitch together
   logicCheckLog?: string; // Standardized check output
   regenerationPrompt?: string; // User-supplied rewrite instructions for this chapter
+  extraSkillKeys?: string[];   // Additional skill keys injected into this chapter's prompt
+  extraSkillText?: string;     // Uploaded/pasted temporary skill content for this chapter
   isCompleted: boolean;
   versionHistory: { content: string; timestamp: number }[];
   lastEdited: number;
