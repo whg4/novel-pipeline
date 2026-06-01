@@ -26,7 +26,7 @@ jobs:
           version: 9
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --registry https://registry.npmjs.org
 
       - name: Build
         run: pnpm build
