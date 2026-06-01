@@ -1,16 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import type { Chapter, OutlineChecklistKey, OutlineValidationResult } from '../types';
+import type { Chapter } from '../types';
 import {
-  runLLMStream, compileOutlinePrompt, compileChapterPrompt, compileBlurbPrompt,
+  runLLMStream, compileOutlinePrompt, compileOutlineLogicReviewPrompt,
+  compileChapterPrompt, compileBlurbPrompt,
   compileLogicReviewPrompt, compileTitlePrompt, compileCoverPrompt,
-  LLM_PAUSED_ERROR, validateOutlineAgainstChecklist
+  LLM_PAUSED_ERROR
 } from '../services/llm';
 import { 
   Sparkles, BookOpen, Layers, Edit3, 
-  CheckSquare, Plus, Save, Copy, 
-  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download
+  CheckSquare, Plus, Save, Copy, FileUp,
+  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download,
+  MessageSquare
 } from 'lucide-react';
 
 interface PipelineViewProps {
@@ -19,7 +21,7 @@ interface PipelineViewProps {
 
 const OUTLINE_MAX_ATTEMPTS = 3;
 
-type GenerationTask = 'auto' | 'outline' | 'chapter' | 'review' | 'marketing' | 'title';
+type GenerationTask = 'auto' | 'outline' | 'outline-review' | 'chapter' | 'review' | 'marketing' | 'title';
 type AutoPipelinePhase = 'outline' | 'sync' | 'chapter' | 'review' | 'blurb' | 'title' | 'cover' | 'done';
 interface AutoPipelineResumeState {
   phase: AutoPipelinePhase;
@@ -75,43 +77,31 @@ function getAutoProgressCurrent(state: AutoPipelineResumeState): number {
   return state.totalSteps;
 }
 
-const OUTLINE_CHECKLIST_ITEMS: { key: OutlineChecklistKey; title: string }[] = [
-  { key: 'a_rhythm', title: '1:1 内核情绪、节奏、爽点复刻' },
-  { key: 'b_no_jargon', title: '名词下沉 (无高科技、生僻、AI味名词)' },
-  { key: 'c_differences', title: '细节数值差异化 (不同于原著数值)' },
-  { key: 'd_payback', title: '前情免费章悬念伏笔与高潮必回收' },
-  { key: 'e_motives', title: '强制打脸前摇 (反派合理化/崩溃链)' },
-  { key: 'f_logic_time', title: '严密逻辑 (伤势处理、时间线差管理)' },
-  { key: 'g_transition', title: '渣男觉醒层次感 (误导、信息差物证)' },
-  { key: 'h_item_consistency', title: '物证流转状态一致性 (前毁后残)' },
-  { key: 'i_no_pose', title: '大女主行为高光 (离开时引爆社会核弹)' },
-  { key: 'j_cliffhangers', title: '章末强力倒计时与悬念勾子' },
-];
 
-function createChecklistState(value = false): Record<OutlineChecklistKey, boolean> {
-  return OUTLINE_CHECKLIST_ITEMS.reduce((acc, item) => {
-    acc[item.key] = value;
-    return acc;
-  }, {} as Record<OutlineChecklistKey, boolean>);
-}
 
-function checklistStateFromValidation(result: OutlineValidationResult): Record<OutlineChecklistKey, boolean> {
-  return OUTLINE_CHECKLIST_ITEMS.reduce((acc, item) => {
-    acc[item.key] = Boolean(result.items.find(candidate => candidate.key === item.key)?.passed);
-    return acc;
-  }, {} as Record<OutlineChecklistKey, boolean>);
-}
-
-function buildValidationFeedback(result: OutlineValidationResult): string {
-  return result.items
-    .filter(item => !item.passed)
-    .map(item => `- ${item.key}: ${item.reason}`)
-    .join('\n');
-}
-
+// Strip non-narrative content: logic review (after ---) and optional content sections
 function stripLogicReview(content: string): string {
-  const splitIndex = content.indexOf('---');
-  return splitIndex !== -1 ? content.substring(0, splitIndex).trim() : content.trim();
+  // Strip at first horizontal rule used as separator
+  let result = content;
+  const hrIndex = content.indexOf('\n---');
+  if (hrIndex !== -1) result = content.substring(0, hrIndex);
+  else if (content.startsWith('---')) result = '';
+
+  // Also strip any trailing optional content blocks
+  const optionalPatterns = [
+    /\n可选[：:：]/,
+    /\n（可选）/,
+    /\n【可选[^】]*】/,
+    /\n\[可选[^\]]*\]/,
+    /\n可选内容[：:：\s]/,
+    /\n可选场景[：:：\s]/,
+  ];
+  for (const pat of optionalPatterns) {
+    const m = pat.exec(result);
+    if (m) result = result.substring(0, m.index);
+  }
+
+  return result.trim();
 }
 
 function sanitizeMarkdownFileName(name: string): string {
@@ -186,9 +176,9 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // ----------------------------------------------------
   // SUB-TAB 1: OUTLINE STUDIO STATE
   // ----------------------------------------------------
-  const [outlineChecklist, setOutlineChecklist] = useState<Record<OutlineChecklistKey, boolean>>(createChecklistState());
-  const [outlineValidationResult, setOutlineValidationResult] = useState<OutlineValidationResult | null>(null);
   const [outlineGenerationStatus, setOutlineGenerationStatus] = useState('');
+  const [outlineReviewOutput, setOutlineReviewOutput] = useState('');
+  const [outlineFeedback, setOutlineFeedback] = useState('');
 
   // ----------------------------------------------------
   // SUB-TAB 2: DRAFTING ROOM STATE
@@ -262,12 +252,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
   // 章节逻辑审查输出
   const [logicReviewOutput, setLogicReviewOutput] = useState('');
-
-  useEffect(() => {
-    if (!project?.outlineValidationResult) return;
-    setOutlineValidationResult(project.outlineValidationResult);
-    setOutlineChecklist(checklistStateFromValidation(project.outlineValidationResult));
-  }, [project?.outlineValidationUpdatedAt]);
 
   useEffect(() => {
     const savedAutoState = loadAutoResumeState(projectId);
@@ -388,100 +372,51 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // ----------------------------------------------------
   // ENGINE 1: OUTLINE GENERATION
   // ----------------------------------------------------
-  const handleGenerateOutline = async (resume = false) => {
+  const handleGenerateOutline = async (resume = false, extraSlapSkill?: string) => {
     const streamOptions = beginGenerationTask('outline', resume);
     setIsGenerating(true);
-    if (!resume) {
-      setGenerationOutput('');
-      setOutlineValidationResult(null);
-      setOutlineChecklist(createChecklistState());
-    }
-    setOutlineGenerationStatus(resume ? '继续生成大纲...' : '准备生成大纲...');
+    if (!resume) setGenerationOutput('');
+    setOutlineGenerationStatus(resume ? '继续生成大纲...' : '生成大纲中...');
     const template = skills.find(s => s.key === 'outline_template')?.content || '';
+    const wolfSkill = project.genre === 'classic-wolf'
+      ? (skills.find(s => s.key === 'wolf_setting')?.content || '')
+      : undefined;
+    const slapSkill = extraSlapSkill ?? (project.genre === 'female-slap'
+      ? (skills.find(s => s.key === 'female_slap')?.content || '')
+      : undefined);
     let latestOutline = resume ? generationOutput : '';
     let wasPaused = false;
-    
+
     try {
-      let validationFeedback = '';
-      let latestValidation: OutlineValidationResult | null = null;
+      const compiled = compileOutlinePrompt(
+        project.rawExample,
+        project.background,
+        project.characters,
+        template,
+        outlineFeedback || undefined,
+        wolfSkill,
+        slapSkill
+      );
 
-      for (let attempt = 1; attempt <= OUTLINE_MAX_ATTEMPTS; attempt++) {
-        setOutlineGenerationStatus(`生成大纲中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
-        if (!resume || attempt > 1) setGenerationOutput('');
+      if (resume && latestOutline) {
+        compiled.user += `\n--- 已生成但被暂停的大纲片段 ---\n${latestOutline}\n\n请从该片段后继续补全，不要重写已经完整输出的部分。`;
+      }
 
-        const compiled = compileOutlinePrompt(
-          project.rawExample,
-          project.background,
-          project.characters,
-          template,
-          validationFeedback
-        );
-
-        if (resume && latestOutline && attempt === 1) {
-          compiled.user += `\n--- 已生成但被暂停的大纲片段 ---\n${latestOutline}\n\n请从该片段后继续补全，不要重写已经完整输出的部分。`;
-        }
-
-        let accumulated = resume && attempt === 1 ? latestOutline : '';
-        await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
-          accumulated += tok;
-          latestOutline = accumulated;
-          setGenerationOutput(accumulated);
-        }, streamOptions);
+      let accumulated = resume ? latestOutline : '';
+      await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
+        accumulated += tok;
         latestOutline = accumulated;
+        setGenerationOutput(accumulated);
+      }, streamOptions);
 
-        setOutlineGenerationStatus(`自检清单审查中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
-        latestValidation = await validateOutlineAgainstChecklist(
-          accumulated,
-          OUTLINE_CHECKLIST_ITEMS,
-          template,
-          {
-            background: project.background,
-            characters: project.characters,
-            rawExample: project.rawExample,
-          },
-          attempt
-        );
-        setOutlineValidationResult(latestValidation);
-        setOutlineChecklist(checklistStateFromValidation(latestValidation));
-
-        if (latestValidation.passed) {
-          await db.projects.update(projectId, {
-            outline: accumulated,
-            outlineValidationStatus: 'valid',
-            outlineValidationResult: latestValidation,
-            outlineValidationUpdatedAt: Date.now(),
-          });
-          await syncOutlineChaptersToDb(accumulated, projectId);
-          setOutlineGenerationStatus('大纲已通过自检并同步章节。');
-          return;
-        }
-
-        validationFeedback = buildValidationFeedback(latestValidation);
-        if (attempt < OUTLINE_MAX_ATTEMPTS) {
-          setOutlineGenerationStatus(`自检未通过，正在按失败项重新生成（下一轮 ${attempt + 1}/${OUTLINE_MAX_ATTEMPTS}）...`);
-        }
-      }
-
-      if (latestValidation) {
-        await db.projects.update(projectId, {
-          outline: latestOutline,
-          outlineValidationStatus: 'invalid',
-          outlineValidationResult: latestValidation,
-          outlineValidationUpdatedAt: Date.now(),
-        });
-      }
-      setOutlineGenerationStatus('自检未通过：已保留最新草稿，请根据失败项调整后再生成。');
+      await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
+      setOutlineGenerationStatus('大纲已生成并保存。');
     } catch (e: any) {
       if (isPausedError(e)) {
         wasPaused = true;
         markTaskPaused('outline');
         if (latestOutline) {
-          await db.projects.update(projectId, {
-            outline: latestOutline,
-            outlineValidationStatus: undefined,
-            outlineValidationResult: undefined,
-            outlineValidationUpdatedAt: Date.now(),
-          });
+          await db.projects.update(projectId, { outline: latestOutline, outlineValidationUpdatedAt: Date.now() });
         }
         setOutlineGenerationStatus('已暂停，当前大纲片段已保留。');
       } else {
@@ -494,15 +429,53 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     }
   };
 
+  const handleReviewOutline = async (resume = false) => {
+    if (!project.outline) {
+      alert('请先生成大纲后再进行逻辑审查。');
+      return;
+    }
+    const logicSkill = skills.find(s => s.key === 'logic_check')?.content || '';
+    const streamOptions = beginGenerationTask('outline-review', resume);
+    setIsGenerating(true);
+    if (!resume) setOutlineReviewOutput('');
+    let wasPaused = false;
+    try {
+      const compiled = compileOutlineLogicReviewPrompt(project.outline, logicSkill);
+      let acc = resume ? outlineReviewOutput : '';
+      await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
+        acc += tok;
+        setOutlineReviewOutput(acc);
+      }, streamOptions);
+    } catch (e: any) {
+      if (isPausedError(e)) {
+        wasPaused = true;
+        markTaskPaused('outline-review');
+      } else {
+        alert(`大纲审查失败：${e.message}`);
+      }
+    } finally {
+      setIsGenerating(false);
+      finishGenerationTask('outline-review', wasPaused);
+    }
+  };
+
+  const handleExportChapterMarkdown = (ch: Chapter) => {
+    const content = ch.id === activeChapterId ? editingDraft : (ch.content || '');
+    const clean = stripLogicReview(content);
+    if (!clean) { alert('该章节还没有正文。'); return; }
+    const title = ch.title || `第 ${ch.chapterNumber} 章`;
+    const markdown = `# ${title}\n\n${clean}\n`;
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${sanitizeMarkdownFileName(title)}.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
   const handleUpdateOutlineManual = async (val: string) => {
-    await db.projects.update(projectId, {
-      outline: val,
-      outlineValidationStatus: undefined,
-      outlineValidationResult: undefined,
-      outlineValidationUpdatedAt: Date.now(),
-    });
-    setOutlineValidationResult(null);
-    setOutlineChecklist(createChecklistState());
+    await db.projects.update(projectId, { outline: val, outlineValidationUpdatedAt: Date.now() });
   };
 
   // ----------------------------------------------------
@@ -796,7 +769,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       // Step 1: 生成大纲（若已有则跳过）
       let currentOutline = autoState.currentOutline || project.outline;
       if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.outline && (!currentOutline || currentOutline.length < 50 || autoState.partialText)) {
-        let latestValidation: OutlineValidationResult | null = null;
 
         for (let attempt = autoState.outlineAttempt; attempt <= OUTLINE_MAX_ATTEMPTS; attempt++) {
           autoState.phase = 'outline';
@@ -806,12 +778,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           const resumingOutline = resume && autoState.partialText && autoState.outlineAttempt === attempt;
           setGenerationOutput(resumingOutline ? autoState.partialText : '');
 
+          const wolfSkill = project.genre === 'classic-wolf'
+            ? (skills.find(s => s.key === 'wolf_setting')?.content || undefined)
+            : undefined;
           const compiled = compileOutlinePrompt(
             project.rawExample,
             project.background,
             project.characters,
             outlineTemplate,
-            autoState.validationFeedback
+            autoState.validationFeedback || undefined,
+            wolfSkill
           );
           if (resumingOutline) {
             compiled.user += `\n--- 已生成但暂停的大纲片段 ---\n${autoState.partialText}\n\n请从该片段后继续补全，不要重写已经输出的部分。`;
@@ -828,27 +804,21 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           autoState.partialText = '';
           checkPause();
 
-          setAutoProgress({ step: `自检大纲（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）`, current: 1, total: 7 });
-          setOutlineGenerationStatus(`自动流水线自检大纲中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
-          latestValidation = await validateOutlineAgainstChecklist(
-            acc,
-            OUTLINE_CHECKLIST_ITEMS,
-            outlineTemplate,
-            {
-              background: project.background,
-              characters: project.characters,
-              rawExample: project.rawExample,
-            },
-            attempt
-          );
-          setOutlineValidationResult(latestValidation);
-          setOutlineChecklist(checklistStateFromValidation(latestValidation));
+          // Logic review pass
+          setAutoProgress({ step: `逻辑审查大纲（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）`, current: 1, total: 7 });
+          setOutlineGenerationStatus(`自动流水线逻辑审查大纲（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
+          let reviewAcc = '';
+          const reviewComp = compileOutlineLogicReviewPrompt(acc, logicSkill);
+          await runLLMStream('outline', reviewComp.system, reviewComp.user, tok => {
+            reviewAcc += tok;
+          }, streamOptions);
+          checkPause();
 
-          if (latestValidation.passed) {
+          // If no issues found, break; otherwise feed back into next attempt
+          const noIssues = /没有问题|无问题|通过|无明显问题|未发现问题/i.test(reviewAcc);
+          if (noIssues || attempt === OUTLINE_MAX_ATTEMPTS) {
             await db.projects.update(projectId, {
               outline: acc,
-              outlineValidationStatus: 'valid',
-              outlineValidationResult: latestValidation,
               outlineValidationUpdatedAt: Date.now(),
             });
             autoState.phase = 'sync';
@@ -857,17 +827,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             break;
           }
 
-          autoState.validationFeedback = buildValidationFeedback(latestValidation);
+          autoState.validationFeedback = reviewAcc;
           autoState.outlineAttempt = attempt + 1;
-          if (attempt === OUTLINE_MAX_ATTEMPTS) {
-            await db.projects.update(projectId, {
-              outline: acc,
-              outlineValidationStatus: 'invalid',
-              outlineValidationResult: latestValidation,
-              outlineValidationUpdatedAt: Date.now(),
-            });
-            throw new Error('大纲自检未通过，已停止自动流水线。请查看失败项后重新生成。');
-          }
           checkPause();
         }
         checkPause();
@@ -1164,7 +1125,42 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       {/* STAGE 1: OUTLINE STUDIO */}
       {/* ---------------------------------------------------- */}
       {pipelineTab === 'outline' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="space-y-4">
+          {/* 例文输入 */}
+          <div className="bg-paper-50 border border-rule p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                <FileUp size={13} className="text-accent" /> 例文输入
+              </h3>
+              <label className="flex items-center gap-1.5 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-xs font-bold px-3 py-1.5 cursor-pointer transition">
+                <FileUp size={12} /> 上传 TXT
+                <input
+                  type="file"
+                  accept=".txt"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = async (ev) => {
+                      const text = ev.target?.result as string;
+                      await db.projects.update(projectId, { rawExample: text });
+                    };
+                    reader.readAsText(file, 'utf-8');
+                    e.target.value = '';
+                  }}
+                />
+              </label>
+            </div>
+            <textarea
+              value={project.rawExample || ''}
+              onChange={(e) => db.projects.update(projectId, { rawExample: e.target.value })}
+              rows={4}
+              className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+              placeholder="上传或粘贴例文（支持 TXT 上传，也可直接粘贴）——大纲生成将仿写其节奏与张力曲线。"
+            />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
             <div className="bg-paper-50 border border-rule p-5 flex flex-col h-[calc(100vh-240px)]">
               <div className="flex-1 flex flex-col gap-3 min-h-0">
@@ -1226,85 +1222,97 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   )}
                 </div>
               </div>
-
-              {project.outline && (
-                <div className="flex justify-end pt-2">
-                  <span className="text-[10px] text-ink-400 bg-paper-100 border border-rule px-2 py-1 inline-block font-semibold">
-                    {project.outlineValidationStatus === 'valid'
-                      ? '✓ 大纲已通过自检并保存。'
-                      : project.outlineValidationStatus === 'invalid'
-                        ? '✕ 大纲未通过自检，已保留最新草稿。'
-                        : '✓ 大纲已生成并保存，可直接编辑。'}
-                  </span>
-                </div>
-              )}
             </div>
-          </div>
 
-          {/* Checklist: 仿写大纲自检清单 */}
-          <div className="space-y-4">
-            <div className="bg-paper-50 border border-rule p-4 space-y-4">
-              <h3 className="text-xs font-bold text-accent uppercase tracking-widest flex items-center gap-1.5">
-                <CheckSquare size={13} /> 仿写大纲自检清单
-              </h3>
-              <p className="text-[10px] text-ink-400 leading-normal">
-                生成后自动按《仿写大纲输出格式模板 v3.0》逐项验证；未通过会最多重试 {OUTLINE_MAX_ATTEMPTS} 轮。
-              </p>
+            {/* Right Panel: 大纲审查 & 反馈 */}
+            <div className="space-y-4">
 
-              {(outlineGenerationStatus || outlineValidationResult) && (
-                <div className={`border p-3 text-[11px] leading-relaxed ${
-                  outlineValidationResult?.passed
-                    ? 'bg-grove-light border-grove/40 text-grove'
-                    : outlineValidationResult
-                      ? 'bg-red-50 border-red-200 text-red-700'
-                      : 'bg-paper border-rule text-ink-500'
-                }`}>
-                  <div className="font-bold">
-                    {outlineValidationResult?.passed ? '自检通过' : outlineValidationResult ? '自检未通过' : '自检状态'}
-                  </div>
-                  <div className="mt-1">
-                    {outlineValidationResult?.summary || outlineGenerationStatus}
-                  </div>
-                </div>
-              )}
-
-              <div className="space-y-2.5">
-                {OUTLINE_CHECKLIST_ITEMS.map((item) => {
-                  const itemResult = outlineValidationResult?.items.find(result => result.key === item.key);
-                  const passed = outlineChecklist[item.key];
-
-                  return (
-                  <label
-                    key={item.key}
-                    className={`flex items-start gap-3 bg-paper border p-2.5 cursor-pointer transition ${
-                      itemResult && !itemResult.passed ? 'border-red-200' : 'border-rule hover:border-rule-dark'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={passed}
-                      onChange={(e) => setOutlineChecklist({ ...outlineChecklist, [item.key]: e.target.checked })}
-                      className="rounded accent-[#9b2d20] shrink-0 cursor-pointer mt-0.5"
-                    />
-                    <span className="min-w-0">
-                      <span className={`block text-[11px] font-medium leading-tight ${
-                        passed ? 'text-ink-400 line-through' : 'text-ink'
-                      }`}>
-                        {item.title}
-                      </span>
-                      {itemResult && !itemResult.passed && (
-                        <span className="block mt-1 text-[10px] text-red-700 leading-snug">
-                          {itemResult.reason}
-                        </span>
-                      )}
-                    </span>
-                  </label>
-                  );
-                })}
+              {/* 逻辑审查大纲 */}
+              <div className="bg-paper-50 border border-rule p-4 space-y-3">
+                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                  <FileSearch size={13} className="text-grove" /> 逻辑审查大纲
+                </h3>
+                <button
+                  disabled={isGenerating || !project.outline}
+                  onClick={() => handleReviewOutline()}
+                  className="w-full bg-grove hover:bg-grove-muted disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                >
+                  <FileSearch size={12} className={activeTask === 'outline-review' && isGenerating ? 'animate-spin' : ''} />
+                  审查大纲
+                </button>
+                {renderTaskControl('outline-review', () => handleReviewOutline(true))}
+                {outlineReviewOutput && (
+                  <textarea
+                    readOnly
+                    value={outlineReviewOutput}
+                    rows={8}
+                    className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:outline-none leading-relaxed resize-none"
+                  />
+                )}
               </div>
+
+              {/* 手动修改建议 → 重新生成 */}
+              <div className="bg-paper-50 border border-rule p-4 space-y-3">
+                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                  <MessageSquare size={13} className="text-accent" /> 按建议重新生成
+                </h3>
+                <textarea
+                  value={outlineFeedback}
+                  onChange={(e) => setOutlineFeedback(e.target.value)}
+                  rows={4}
+                  className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                  placeholder="粘贴审查建议或手动输入修改方向，然后点击下方按钮重新生成大纲..."
+                />
+                <div className="flex flex-col gap-2">
+                  <button
+                    disabled={isGenerating}
+                    onClick={() => handleGenerateOutline()}
+                    className="w-full bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Sparkles size={12} className={activeTask === 'outline' && isGenerating ? 'animate-spin' : ''} />
+                    按建议重新生成大纲
+                  </button>
+                  <button
+                    disabled={isGenerating}
+                    onClick={() => {
+                      const slapContent = skills.find(s => s.key === 'female_slap')?.content || '';
+                      handleGenerateOutline(false, slapContent);
+                    }}
+                    className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                  >
+                    <Sparkles size={12} /> 用打脸闭环重新生成
+                  </button>
+                </div>
+              </div>
+
+              {/* 生成备选书名 */}
+              <div className="bg-paper-50 border border-rule p-4 space-y-3">
+                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
+                  <Type size={13} className="text-accent" /> 备选书名
+                </h3>
+                <button
+                  disabled={isGenerating || !project.outline}
+                  onClick={() => handleGenerateTitleCandidates()}
+                  className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                >
+                  <Sparkles size={12} className={activeTask === 'title' && isGenerating ? 'animate-spin' : ''} />
+                  生成备选书名
+                </button>
+                {renderTaskControl('title', () => handleGenerateTitleCandidates(true))}
+                {(titleOutput || project.titleCandidates) && (
+                  <textarea
+                    readOnly
+                    value={titleOutput || project.titleCandidates || ''}
+                    rows={5}
+                    className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:outline-none leading-relaxed resize-none"
+                  />
+                )}
+              </div>
+
             </div>
           </div>
         </div>
+      </div>
       )}
 
       {/* ---------------------------------------------------- */}
@@ -1453,13 +1461,25 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                     <div className="md:col-span-2 relative h-full flex flex-col">
                       <div className="absolute top-2 right-2 z-10 flex gap-2">
                         {editingDraft && (
-                          <button
-                            onClick={() => handleCopyText(editingDraft)}
-                            className="p-1 px-2 bg-paper-100 border border-rule hover:bg-paper text-[10px] text-ink-500 font-bold flex items-center gap-1 transition"
-                            title="Copy clean narrative"
-                          >
-                            <Copy size={11} /> 复制正文
-                          </button>
+                          <>
+                            <button
+                              onClick={() => {
+                                const ch = chapters.find(c => c.id === activeChapterId);
+                                if (ch) handleExportChapterMarkdown(ch);
+                              }}
+                              className="p-1 px-2 bg-paper-100 border border-rule hover:bg-paper text-[10px] text-ink-500 font-bold flex items-center gap-1 transition"
+                              title="导出本章为 MD（去除自检内容）"
+                            >
+                              <Download size={11} /> 导出单章
+                            </button>
+                            <button
+                              onClick={() => handleCopyText(editingDraft)}
+                              className="p-1 px-2 bg-paper-100 border border-rule hover:bg-paper text-[10px] text-ink-500 font-bold flex items-center gap-1 transition"
+                              title="Copy clean narrative"
+                            >
+                              <Copy size={11} /> 复制正文
+                            </button>
+                          </>
                         )}
                       </div>
                       <textarea

@@ -689,7 +689,9 @@ export function compileOutlinePrompt(
   background: string,
   characters: string,
   templateSkill: string,
-  validationFeedback?: string
+  validationFeedback?: string,
+  wolfSkill?: string,
+  slapSkill?: string
 ): { system: string; user: string } {
   const system = `You are a high-level creative writing AI that specializes in drafting best-selling web novel outlines. 
 You must strictly follow the provided "仿写大纲输出格式模板 v3.0" rules.
@@ -697,7 +699,13 @@ Your outline structure must follow this format:
 - 名词下沉 (No high-tech/AI jargon, use grounded real-world items).
 - 1:1 Rhythm & Tension mapping of the reference example.
 - Character lists and roles.
-- Act structured chapters with explicit goals.`;
+- Act structured chapters with explicit goals.${wolfSkill ? `
+
+--- WEREWOLF WORLD SETTINGS (Classic Tribal Code) ---
+${wolfSkill}` : ''}${slapSkill ? `
+
+--- FEMALE PROTAGONIST CLIMAX / SLAPBACK (打脸闭环) ---
+${slapSkill}` : ''}`;
 
   const user = `
 --- TEMPLATE SYSTEM GUIDELINES ---
@@ -713,10 +721,39 @@ ${characters || 'Standard characters'}
 --- REFERENCE EXAMPLE STORY (To imitate 1:1 in tension & emotion line) ---
 ${example}
 
-${validationFeedback ? `--- PREVIOUS SELF-CHECK FAILURES TO FIX ---\n${validationFeedback}\n` : ''}
+${validationFeedback ? `--- REVISION SUGGESTIONS TO ADDRESS ---\n${validationFeedback}\n` : ''}
 
 Generate a beautiful, comprehensive, and highly-detailed novel outline corresponding exactly to the template rules above.
 `;
+
+  return { system, user };
+}
+
+// Compile outline logic review prompt
+export function compileOutlineLogicReviewPrompt(
+  outline: string,
+  logicCheckSkill: string
+): { system: string; user: string } {
+  const system = `You are a meticulous literary editor specializing in story structure and plot consistency.
+You will review a novel outline and identify any logical issues, structural problems, or areas that need improvement.
+
+--- REVIEW FRAMEWORK ---
+${logicCheckSkill}`;
+
+  const user = `Please review the following novel outline for:
+1. Timeline and pacing consistency
+2. Character motivation coherence
+3. Plot logic and cause-effect chains
+4. Foreshadowing and payoff alignment
+5. Chapter structure and cliffhanger effectiveness
+6. Any gaps or contradictions
+
+For each issue found, provide a specific, actionable suggestion. Format your response as a structured review with clear sections.
+
+--- NOVEL OUTLINE TO REVIEW ---
+${outline}
+
+Provide your review in Chinese. Be specific and actionable with each suggestion.`;
 
   return { system, user };
 }
