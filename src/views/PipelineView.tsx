@@ -103,6 +103,24 @@ function stripLogicReview(content: string): string {
   return result.trim();
 }
 
+// 将大纲拆成主体（一~三）、自检清单（四）、可选附录（五）三部分
+function splitOutlineSections(outline: string): { preamble: string; main: string; checklist: string; appendix: string } {
+  const idxOne  = outline.search(/\n##\s*一[、,，.]/);
+  const idxFour = outline.search(/\n##\s*四[、,，.]/);
+  const idxFive = outline.search(/\n##\s*五[、,，.]/);
+  const preamble = idxOne > 0 ? outline.slice(0, idxOne).trim() : '';
+  const mainStart = idxOne > 0 ? idxOne : 0;
+  if (idxFour === -1) return { preamble, main: outline.slice(mainStart).trim(), checklist: '', appendix: '' };
+  const main = outline.slice(mainStart, idxFour).trim();
+  if (idxFive === -1) return { preamble, main, checklist: outline.slice(idxFour).trim(), appendix: '' };
+  return {
+    preamble,
+    main,
+    checklist: outline.slice(idxFour, idxFive).trim(),
+    appendix: outline.slice(idxFive).trim(),
+  };
+}
+
 function sanitizeMarkdownFileName(name: string): string {
   return (name || '小说正文')
     .replace(/[\\/:*?"<>|]/g, '_')
@@ -545,7 +563,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   };
 
   const handleUpdateOutlineManual = async (val: string) => {
-    await db.projects.update(projectId, { outline: val, outlineValidationUpdatedAt: Date.now() });
+    // Preserve preamble, checklist and appendix from the stored outline
+    const { preamble, checklist, appendix } = splitOutlineSections(project.outline);
+    const merged = [preamble, val, checklist, appendix].filter(Boolean).join('\n\n');
+    await db.projects.update(projectId, { outline: merged, outlineValidationUpdatedAt: Date.now() });
   };
 
   // ----------------------------------------------------
@@ -1304,7 +1325,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                     </div>
                   ) : (
                     <textarea
-                      value={isGenerating ? generationOutput : project.outline}
+                      value={isGenerating ? splitOutlineSections(generationOutput).main : splitOutlineSections(project.outline).main}
                       onChange={(e) => handleUpdateOutlineManual(e.target.value)}
                       className="w-full h-full bg-paper border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
                       placeholder="大纲将在此生成。填写背景、人物设定与参考模板后，点击「生成大纲」..."
@@ -1460,6 +1481,46 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
             </div>
         </div>
+
+        {/* 四、自检清单 & 五、可选附录 — 单独展示区块 */}
+        {(() => {
+          const { checklist, appendix } = splitOutlineSections(project.outline);
+          if (!checklist && !appendix) return null;
+          return (
+            <div className="space-y-3 mt-2">
+              {checklist && (
+                <details className="bg-paper-50 border border-rule group">
+                  <summary className="flex items-center justify-between px-4 py-3 cursor-pointer select-none text-xs font-bold text-ink list-none">
+                    <span className="flex items-center gap-1.5">
+                      <FileSearch size={13} className="text-grove shrink-0" />
+                      四、大纲交付前自检清单
+                    </span>
+                    <span className="text-ink-400 font-normal text-[10px] group-open:hidden">▶ 展开</span>
+                    <span className="text-ink-400 font-normal text-[10px] hidden group-open:inline">▼ 收起</span>
+                  </summary>
+                  <div className="px-4 pb-4 pt-1">
+                    <pre className="whitespace-pre-wrap font-mono text-[10px] text-ink leading-relaxed bg-paper border border-rule p-3 max-h-[60vh] overflow-y-auto">{checklist}</pre>
+                  </div>
+                </details>
+              )}
+              {appendix && (
+                <details className="bg-paper-50 border border-rule group">
+                  <summary className="flex items-center justify-between px-4 py-3 cursor-pointer select-none text-xs font-bold text-ink list-none">
+                    <span className="flex items-center gap-1.5">
+                      <Layers size={13} className="text-accent shrink-0" />
+                      五、可选附录
+                    </span>
+                    <span className="text-ink-400 font-normal text-[10px] group-open:hidden">▶ 展开</span>
+                    <span className="text-ink-400 font-normal text-[10px] hidden group-open:inline">▼ 收起</span>
+                  </summary>
+                  <div className="px-4 pb-4 pt-1">
+                    <pre className="whitespace-pre-wrap font-mono text-[10px] text-ink leading-relaxed bg-paper border border-rule p-3 max-h-[40vh] overflow-y-auto">{appendix}</pre>
+                  </div>
+                </details>
+              )}
+            </div>
+          );
+        })()}
       </div>
       )}
 
