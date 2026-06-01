@@ -43,8 +43,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     shortName: 'Gemini',
     apiStyle: 'gemini-generate-content',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemini-2.5-flash-preview-05-20',
-    modelSuggestions: ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-pro-preview-06-05', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+    defaultModel: 'gemini-2.5-pro',
+    modelSuggestions: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.0-flash', 'gemini-2.0-flash-lite'],
     description: '适合大纲结构、资料整理和多轮内容扩写。',
     helpText: 'Gemini 默认走官方 generateContent/streamGenerateContent 接口，API key 会作为请求参数发送。',
     directBrowserSupport: 'supported',
@@ -133,7 +133,21 @@ export function createConfigForProvider(providerId: LLMProviderId, current?: Par
     baseUrl: preset.defaultBaseUrl,
     model: preset.defaultModel,
     temperature: current?.temperature ?? 0.7,
-    maxTokens: current?.maxTokens ?? 8000,
     extraHeaders: current?.extraHeaders ?? {},
   };
+}
+
+export function normalizeModelForProvider(providerId: LLMProviderId, model: string | undefined): string {
+  const preset = getProviderPreset(providerId);
+  const normalizedModel = (model || preset.defaultModel).trim().replace(/^models\//, '');
+
+  if (providerId !== 'gemini') return normalizedModel || preset.defaultModel;
+
+  const geminiModelAliases: Record<string, string> = {
+    'gemini-3.1-pro': 'gemini-2.5-pro',
+    'gemini-2.5-pro-preview-06-05': 'gemini-2.5-pro',
+    'gemini-2.5-flash-preview-05-20': 'gemini-2.5-flash',
+  };
+
+  return geminiModelAliases[normalizedModel] ?? normalizedModel ?? preset.defaultModel;
 }

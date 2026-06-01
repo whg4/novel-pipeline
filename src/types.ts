@@ -6,9 +6,38 @@ export interface Project {
   characters: string;
   rawExample: string; // The reference/example draft to imitate
   outline: string; // Generated outline
+  outlineValidationStatus?: 'pending' | 'valid' | 'invalid';
+  outlineValidationResult?: OutlineValidationResult;
+  outlineValidationUpdatedAt?: number;
   createdAt: number;
   titleCandidates?: string; // LLM 生成的书名候选
   coverPrompt?: string;    // LLM 生成的封面提示词
+}
+
+export type OutlineChecklistKey =
+  | 'a_rhythm'
+  | 'b_no_jargon'
+  | 'c_differences'
+  | 'd_payback'
+  | 'e_motives'
+  | 'f_logic_time'
+  | 'g_transition'
+  | 'h_item_consistency'
+  | 'i_no_pose'
+  | 'j_cliffhangers';
+
+export interface OutlineChecklistItemResult {
+  key: OutlineChecklistKey;
+  passed: boolean;
+  reason: string;
+}
+
+export interface OutlineValidationResult {
+  passed: boolean;
+  attempt: number;
+  summary: string;
+  failedItems: OutlineChecklistKey[];
+  items: OutlineChecklistItemResult[];
 }
 
 export interface Chapter {
@@ -70,7 +99,6 @@ export interface APIConfig {
   baseUrl: string;
   model: string;
   temperature: number;
-  maxTokens: number;
   extraHeaders?: Record<string, string>;
 }
 

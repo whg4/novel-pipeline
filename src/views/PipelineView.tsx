@@ -1,19 +1,72 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import { Chapter } from '../types';
+import type { APIConfig, Chapter, LLMProviderId, OutlineChecklistKey, OutlineValidationResult, StageAssignments, StageRole } from '../types';
 import {
   runLLMStream, compileOutlinePrompt, compileChapterPrompt, compileBlurbPrompt,
-  compileLogicReviewPrompt, compileTitlePrompt, compileCoverPrompt
+  compileLogicReviewPrompt, compileTitlePrompt, compileCoverPrompt,
+  getConfigForStage, getStageAssignments, saveStageAssignments,
+  saveStageModelOverride, validateOutlineAgainstChecklist
 } from '../services/llm';
+import { getProviderPreset, PROVIDER_PRESETS } from '../services/providers';
 import { 
   Sparkles, BookOpen, Layers, Edit3, 
   CheckSquare, Plus, Save, Copy, 
-  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download
+  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download, Cpu
 } from 'lucide-react';
 
 interface PipelineViewProps {
   projectId: number;
+}
+
+const OUTLINE_MAX_ATTEMPTS = 3;
+
+const OUTLINE_CHECKLIST_ITEMS: { key: OutlineChecklistKey; title: string }[] = [
+  { key: 'a_rhythm', title: '1:1 内核情绪、节奏、爽点复刻' },
+  { key: 'b_no_jargon', title: '名词下沉 (无高科技、生僻、AI味名词)' },
+  { key: 'c_differences', title: '细节数值差异化 (不同于原著数值)' },
+  { key: 'd_payback', title: '前情免费章悬念伏笔与高潮必回收' },
+  { key: 'e_motives', title: '强制打脸前摇 (反派合理化/崩溃链)' },
+  { key: 'f_logic_time', title: '严密逻辑 (伤势处理、时间线差管理)' },
+  { key: 'g_transition', title: '渣男觉醒层次感 (误导、信息差物证)' },
+  { key: 'h_item_consistency', title: '物证流转状态一致性 (前毁后残)' },
+  { key: 'i_no_pose', title: '大女主行为高光 (离开时引爆社会核弹)' },
+  { key: 'j_cliffhangers', title: '章末强力倒计时与悬念勾子' },
+];
+
+const STAGE_MODEL_ITEMS: { stage: StageRole; label: string }[] = [
+  { stage: 'outline', label: '大纲' },
+  { stage: 'chapter', label: '正文' },
+  { stage: 'review', label: '审查' },
+  { stage: 'marketing', label: '营销' },
+];
+
+function createChecklistState(value = false): Record<OutlineChecklistKey, boolean> {
+  return OUTLINE_CHECKLIST_ITEMS.reduce((acc, item) => {
+    acc[item.key] = value;
+    return acc;
+  }, {} as Record<OutlineChecklistKey, boolean>);
+}
+
+function checklistStateFromValidation(result: OutlineValidationResult): Record<OutlineChecklistKey, boolean> {
+  return OUTLINE_CHECKLIST_ITEMS.reduce((acc, item) => {
+    acc[item.key] = Boolean(result.items.find(candidate => candidate.key === item.key)?.passed);
+    return acc;
+  }, {} as Record<OutlineChecklistKey, boolean>);
+}
+
+function buildStageConfigs(): Record<StageRole, APIConfig> {
+  return STAGE_MODEL_ITEMS.reduce((acc, item) => {
+    acc[item.stage] = getConfigForStage(item.stage);
+    return acc;
+  }, {} as Record<StageRole, APIConfig>);
+}
+
+function buildValidationFeedback(result: OutlineValidationResult): string {
+  return result.items
+    .filter(item => !item.passed)
+    .map(item => `- ${item.key}: ${item.reason}`)
+    .join('\n');
 }
 
 // 从大纲文本解析章节（格式：### 第 X 章：标题 或 ### 第X章:标题）
@@ -77,18 +130,12 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // ----------------------------------------------------
   // SUB-TAB 1: OUTLINE STUDIO STATE
   // ----------------------------------------------------
-  const [outlineChecklist, setOutlineChecklist] = useState<Record<string, boolean>>({
-    a_rhythm: false,
-    b_no_jargon: false,
-    c_differences: false,
-    d_payback: false,
-    e_motives: false,
-    f_logic_time: false,
-    g_transition: false,
-    h_item_consistency: false,
-    i_no_pose: false,
-    j_cliffhangers: false
-  });
+  const [outlineChecklist, setOutlineChecklist] = useState<Record<OutlineChecklistKey, boolean>>(createChecklistState());
+  const [outlineValidationResult, setOutlineValidationResult] = useState<OutlineValidationResult | null>(null);
+  const [outlineGenerationStatus, setOutlineGenerationStatus] = useState('');
+  const [stageAssignments, setStageAssignments] = useState<StageAssignments>(getStageAssignments);
+  const [stageConfigs, setStageConfigs] = useState<Record<StageRole, APIConfig>>(buildStageConfigs);
+  const [activeStageTab, setActiveStageTab] = useState<StageRole>(STAGE_MODEL_ITEMS[0].stage);
 
   // ----------------------------------------------------
   // SUB-TAB 2: DRAFTING ROOM STATE
@@ -97,6 +144,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [editingTitle, setEditingTitle] = useState('');
   const [editingOutline, setEditingOutline] = useState('');
   const [editingDraft, setEditingContent] = useState('');
+  const [chapterError, setChapterError] = useState<string | null>(null);
   const [greaseWarnings, setGreaseWarnings] = useState<string[]>([]);
   const [draftChecklist, setDraftChecklist] = useState<Record<string, boolean>>({
     timeline: false,
@@ -159,6 +207,48 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // 章节逻辑审查输出
   const [logicReviewOutput, setLogicReviewOutput] = useState('');
 
+  useEffect(() => {
+    if (!project?.outlineValidationResult) return;
+    setOutlineValidationResult(project.outlineValidationResult);
+    setOutlineChecklist(checklistStateFromValidation(project.outlineValidationResult));
+  }, [project?.outlineValidationUpdatedAt]);
+
+  const handlePipelineStageProviderChange = (stage: StageRole, provider: LLMProviderId) => {
+    const nextAssignments = { ...stageAssignments, [stage]: provider };
+    setStageAssignments(nextAssignments);
+    saveStageAssignments(nextAssignments);
+    saveStageModelOverride(stage, '');
+    setStageConfigs({ ...buildStageConfigs(), [stage]: getConfigForStage(stage) });
+  };
+
+  const handlePipelineStageModelChange = (stage: StageRole, model: string) => {
+    setStageConfigs(prev => ({
+      ...prev,
+      [stage]: {
+        ...(prev[stage] ?? getConfigForStage(stage)),
+        model,
+      },
+    }));
+    saveStageModelOverride(stage, model);
+  };
+
+  // Defined before the project guard so the useEffect above can safely reference it
+  const handleSelectChapter = (ch: Chapter) => {
+    setActiveChapterId(ch.id!);
+    setEditingTitle(ch.title);
+    setEditingOutline(ch.outlineSection);
+    setEditingContent(ch.content);
+    setDraftChecklist({
+      timeline: false,
+      place: false,
+      item_consistent: false,
+      item_possession: false,
+      avoid_omniscience: false,
+      avoid_loop: false,
+      stitched_start: false
+    });
+  };
+
   if (!project) {
     return (
       <div className="flex items-center justify-center p-12 text-ink-400">
@@ -174,57 +264,99 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const handleGenerateOutline = async () => {
     setIsGenerating(true);
     setGenerationOutput('');
+    setOutlineGenerationStatus('准备生成大纲...');
+    setOutlineValidationResult(null);
+    setOutlineChecklist(createChecklistState());
     const template = skills.find(s => s.key === 'outline_template')?.content || '';
     
     try {
-      const compiled = compileOutlinePrompt(
-        project.rawExample,
-        project.background,
-        project.characters,
-        template
-      );
+      let validationFeedback = '';
+      let latestOutline = '';
+      let latestValidation: OutlineValidationResult | null = null;
 
-      let accumulated = '';
-      await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
-        accumulated += tok;
-        setGenerationOutput(accumulated);
-      });
+      for (let attempt = 1; attempt <= OUTLINE_MAX_ATTEMPTS; attempt++) {
+        setOutlineGenerationStatus(`生成大纲中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
+        setGenerationOutput('');
 
-      // Update in database
-      await db.projects.update(projectId, { outline: accumulated });
-      // 自动解析并同步章节结构
-      await syncOutlineChaptersToDb(accumulated, projectId);
-      setIsGenerating(false);
+        const compiled = compileOutlinePrompt(
+          project.rawExample,
+          project.background,
+          project.characters,
+          template,
+          validationFeedback
+        );
+
+        let accumulated = '';
+        await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
+          accumulated += tok;
+          setGenerationOutput(accumulated);
+        });
+        latestOutline = accumulated;
+
+        setOutlineGenerationStatus(`自检清单审查中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
+        latestValidation = await validateOutlineAgainstChecklist(
+          accumulated,
+          OUTLINE_CHECKLIST_ITEMS,
+          template,
+          {
+            background: project.background,
+            characters: project.characters,
+            rawExample: project.rawExample,
+          },
+          attempt
+        );
+        setOutlineValidationResult(latestValidation);
+        setOutlineChecklist(checklistStateFromValidation(latestValidation));
+
+        if (latestValidation.passed) {
+          await db.projects.update(projectId, {
+            outline: accumulated,
+            outlineValidationStatus: 'valid',
+            outlineValidationResult: latestValidation,
+            outlineValidationUpdatedAt: Date.now(),
+          });
+          await syncOutlineChaptersToDb(accumulated, projectId);
+          setOutlineGenerationStatus('大纲已通过自检并同步章节。');
+          return;
+        }
+
+        validationFeedback = buildValidationFeedback(latestValidation);
+        if (attempt < OUTLINE_MAX_ATTEMPTS) {
+          setOutlineGenerationStatus(`自检未通过，正在按失败项重新生成（下一轮 ${attempt + 1}/${OUTLINE_MAX_ATTEMPTS}）...`);
+        }
+      }
+
+      if (latestValidation) {
+        await db.projects.update(projectId, {
+          outline: latestOutline,
+          outlineValidationStatus: 'invalid',
+          outlineValidationResult: latestValidation,
+          outlineValidationUpdatedAt: Date.now(),
+        });
+      }
+      setOutlineGenerationStatus('自检未通过：已保留最新草稿，请根据失败项调整后再生成。');
     } catch (e: any) {
       alert(`大纲生成失败：${e.message}`);
+      setOutlineGenerationStatus('大纲生成失败。');
+    } finally {
       setIsGenerating(false);
     }
   };
 
   const handleUpdateOutlineManual = async (val: string) => {
-    await db.projects.update(projectId, { outline: val });
+    await db.projects.update(projectId, {
+      outline: val,
+      outlineValidationStatus: undefined,
+      outlineValidationResult: undefined,
+      outlineValidationUpdatedAt: Date.now(),
+    });
+    setOutlineValidationResult(null);
+    setOutlineChecklist(createChecklistState());
   };
 
   // ----------------------------------------------------
   // ENGINE 2: CHAPTER DRAFTING
   // ----------------------------------------------------
-  const handleSelectChapter = (ch: Chapter) => {
-    setActiveChapterId(ch.id!);
-    setEditingTitle(ch.title);
-    setEditingOutline(ch.outlineSection);
-    setEditingContent(ch.content);
-    // Reset checklists
-    setDraftChecklist({
-      timeline: false,
-      place: false,
-      item_consistent: false,
-      item_possession: false,
-      avoid_omniscience: false,
-      avoid_loop: false,
-      stitched_start: false
-    });
-  };
-
   const handleCreateNewChapter = async () => {
     const nextNum = chapters.length === 0 ? 1 : chapters[chapters.length - 1].chapterNumber + 1;
     const newCh: Chapter = {
@@ -269,6 +401,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const handleGenerateChapterStream = async () => {
     if (activeChapterId === null) return;
     setIsGenerating(true);
+    setChapterError(null);
     setEditingContent('');
     
     // Determine preceding chapters for stich context
@@ -302,7 +435,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
       setIsGenerating(false);
     } catch (e: any) {
-      alert(`正文生成失败：${e.message}`);
+      setChapterError(e.message);
       setIsGenerating(false);
     }
   };
@@ -401,15 +534,67 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       // Step 1: 生成大纲（若已有则跳过）
       let currentOutline = project.outline;
       if (!currentOutline || currentOutline.length < 50) {
-        setAutoProgress({ step: '生成大纲', current: 1, total: 7 });
-        const compiled = compileOutlinePrompt(project.rawExample, project.background, project.characters, outlineTemplate);
-        let acc = '';
-        await runLLMStream('outline', compiled.system, compiled.user, tok => {
-          acc += tok;
-          setGenerationOutput(acc);
-        });
-        await db.projects.update(projectId, { outline: acc });
-        currentOutline = acc;
+        let validationFeedback = '';
+        let latestValidation: OutlineValidationResult | null = null;
+
+        for (let attempt = 1; attempt <= OUTLINE_MAX_ATTEMPTS; attempt++) {
+          setAutoProgress({ step: `生成大纲（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）`, current: 1, total: 7 });
+          setOutlineGenerationStatus(`自动流水线生成大纲中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
+          setGenerationOutput('');
+
+          const compiled = compileOutlinePrompt(
+            project.rawExample,
+            project.background,
+            project.characters,
+            outlineTemplate,
+            validationFeedback
+          );
+          let acc = '';
+          await runLLMStream('outline', compiled.system, compiled.user, tok => {
+            acc += tok;
+            setGenerationOutput(acc);
+          });
+          currentOutline = acc;
+          checkPause();
+
+          setAutoProgress({ step: `自检大纲（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）`, current: 1, total: 7 });
+          setOutlineGenerationStatus(`自动流水线自检大纲中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
+          latestValidation = await validateOutlineAgainstChecklist(
+            acc,
+            OUTLINE_CHECKLIST_ITEMS,
+            outlineTemplate,
+            {
+              background: project.background,
+              characters: project.characters,
+              rawExample: project.rawExample,
+            },
+            attempt
+          );
+          setOutlineValidationResult(latestValidation);
+          setOutlineChecklist(checklistStateFromValidation(latestValidation));
+
+          if (latestValidation.passed) {
+            await db.projects.update(projectId, {
+              outline: acc,
+              outlineValidationStatus: 'valid',
+              outlineValidationResult: latestValidation,
+              outlineValidationUpdatedAt: Date.now(),
+            });
+            break;
+          }
+
+          validationFeedback = buildValidationFeedback(latestValidation);
+          if (attempt === OUTLINE_MAX_ATTEMPTS) {
+            await db.projects.update(projectId, {
+              outline: acc,
+              outlineValidationStatus: 'invalid',
+              outlineValidationResult: latestValidation,
+              outlineValidationUpdatedAt: Date.now(),
+            });
+            throw new Error('大纲自检未通过，已停止自动流水线。请查看失败项后重新生成。');
+          }
+          checkPause();
+        }
         checkPause();
       }
 
@@ -545,6 +730,94 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         </div>
       </div>
 
+      <div className="bg-paper-50 border border-rule p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <div className="text-xs font-bold text-ink flex items-center gap-1.5">
+              <Cpu size={14} className="text-accent" /> 阶段模型
+            </div>
+            <p className="text-[10px] text-ink-400 mt-0.5">每个阶段可独立选择供应商与模型，立即保存到本地配置。</p>
+          </div>
+          <span className="text-[10px] text-ink-400 bg-paper border border-rule px-2 py-1 font-semibold">
+            输出 token 默认不限制
+          </span>
+        </div>
+
+        <div className="space-y-3">
+          {/* Stage tabs */}
+          <div className="flex gap-0 border border-rule overflow-hidden">
+            {STAGE_MODEL_ITEMS.map(({ stage, label }) => {
+              const assigned = stageAssignments[stage];
+              const preset = getProviderPreset(assigned);
+              const isActive = activeStageTab === stage;
+              return (
+                <button
+                  key={stage}
+                  type="button"
+                  onClick={() => setActiveStageTab(stage)}
+                  className={`flex-1 px-3 py-2 text-xs font-semibold transition flex flex-col items-center gap-0.5 ${
+                    isActive
+                      ? 'bg-accent text-white'
+                      : 'bg-paper-50 text-ink-400 hover:text-ink hover:bg-paper'
+                  }`}
+                >
+                  <span>{label}</span>
+                  <span className={`text-[10px] font-mono font-normal ${
+                    isActive ? 'text-white/80' : 'text-accent'
+                  }`}>{preset.shortName}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active stage detail */}
+          {(() => {
+            const stage = activeStageTab;
+            const assignedProvider = stageAssignments[stage];
+            const config = stageConfigs[stage] ?? getConfigForStage(stage);
+            const preset = getProviderPreset(assignedProvider);
+            return (
+              <div className="bg-paper border border-rule p-3 space-y-2">
+                <select
+                  value={assignedProvider}
+                  onChange={(event) => handlePipelineStageProviderChange(stage, event.target.value as LLMProviderId)}
+                  className="w-full bg-paper-50 border border-rule px-2 py-1.5 text-xs text-ink focus:outline-none focus:ring-1 focus:ring-accent"
+                  disabled={isGenerating || isAutoRunning}
+                >
+                  {PROVIDER_PRESETS.map(provider => (
+                    <option key={provider.id} value={provider.id}>{provider.name}</option>
+                  ))}
+                </select>
+                <input
+                  type="text"
+                  value={config.model}
+                  onChange={(event) => handlePipelineStageModelChange(stage, event.target.value)}
+                  className="w-full bg-paper-50 border border-rule px-2 py-1.5 text-xs text-ink font-mono focus:outline-none focus:ring-1 focus:ring-accent"
+                  disabled={isGenerating || isAutoRunning}
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {preset.modelSuggestions.slice(0, 3).map(model => (
+                    <button
+                      type="button"
+                      key={model}
+                      onClick={() => handlePipelineStageModelChange(stage, model)}
+                      disabled={isGenerating || isAutoRunning}
+                      className={`text-[10px] px-2 py-0.5 border font-semibold transition disabled:opacity-50 ${
+                        config.model === model
+                          ? 'bg-accent text-white border-accent'
+                          : 'bg-paper-50 text-ink-400 border-rule hover:text-ink hover:border-rule-dark'
+                      }`}
+                    >
+                      {model}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
       {/* 自动流水线进度条 */}
       {(isAutoRunning || autoProgress) && (
         <div className="bg-accent-faint border border-accent/30 p-4 flex items-center justify-between gap-4">
@@ -644,7 +917,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   {isGenerating && !generationOutput ? (
                     <div className="flex flex-col items-center justify-center py-20 text-ink-400 space-y-2">
                       <RefreshCw size={24} className="animate-spin text-ink-300" />
-                      <p className="text-xs">正在调用模型生成大纲...</p>
+                      <p className="text-xs">{outlineGenerationStatus || '正在调用模型生成大纲...'}</p>
                     </div>
                   ) : (
                     <textarea
@@ -660,7 +933,11 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               {project.outline && (
                 <div className="flex justify-end pt-2">
                   <span className="text-[10px] text-ink-400 bg-paper-100 border border-rule px-2 py-1 inline-block font-semibold">
-                    ✓ 大纲已生成并保存，可直接编辑。
+                    {project.outlineValidationStatus === 'valid'
+                      ? '✓ 大纲已通过自检并保存。'
+                      : project.outlineValidationStatus === 'invalid'
+                        ? '✕ 大纲未通过自检，已保留最新草稿。'
+                        : '✓ 大纲已生成并保存，可直接编辑。'}
                   </span>
                 </div>
               )}
@@ -674,39 +951,59 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 <CheckSquare size={13} /> 仿写大纲自检清单
               </h3>
               <p className="text-[10px] text-ink-400 leading-normal">
-                按照《仿写大纲输出格式模板 v3.0》规则，逐项验证大纲内容：
+                生成后自动按《仿写大纲输出格式模板 v3.0》逐项验证；未通过会最多重试 {OUTLINE_MAX_ATTEMPTS} 轮。
               </p>
 
+              {(outlineGenerationStatus || outlineValidationResult) && (
+                <div className={`border p-3 text-[11px] leading-relaxed ${
+                  outlineValidationResult?.passed
+                    ? 'bg-grove-light border-grove/40 text-grove'
+                    : outlineValidationResult
+                      ? 'bg-red-50 border-red-200 text-red-700'
+                      : 'bg-paper border-rule text-ink-500'
+                }`}>
+                  <div className="font-bold">
+                    {outlineValidationResult?.passed ? '自检通过' : outlineValidationResult ? '自检未通过' : '自检状态'}
+                  </div>
+                  <div className="mt-1">
+                    {outlineValidationResult?.summary || outlineGenerationStatus}
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2.5">
-                {[
-                  { key: 'a_rhythm', title: '1:1 内核情绪、节奏、爽点复刻' },
-                  { key: 'b_no_jargon', title: '名词下沉 (无高科技、生僻、AI味名词)' },
-                  { key: 'c_differences', title: '细节数值差异化 (不同于原著数值)' },
-                  { key: 'd_payback', title: '前情免费章悬念伏笔与高潮必回收' },
-                  { key: 'e_motives', title: '强制打脸前摇 (反派合理化/崩溃链)' },
-                  { key: 'f_logic_time', title: '严密逻辑 (伤势处理、时间线差管理)' },
-                  { key: 'g_transition', title: '渣男觉醒层次感 (误导、信息差物证)' },
-                  { key: 'h_item_consistency', title: '物证流转状态一致性 (前毁后残)' },
-                  { key: 'i_no_pose', title: '大女主行为高光 (离开时引爆社会核弹)' },
-                  { key: 'j_cliffhangers', title: '章末强力倒计时与悬念勾子' }
-                ].map((item) => (
+                {OUTLINE_CHECKLIST_ITEMS.map((item) => {
+                  const itemResult = outlineValidationResult?.items.find(result => result.key === item.key);
+                  const passed = outlineChecklist[item.key];
+
+                  return (
                   <label
                     key={item.key}
-                    className="flex items-center gap-3 bg-paper border border-rule hover:border-rule-dark p-2.5 cursor-pointer transition"
+                    className={`flex items-start gap-3 bg-paper border p-2.5 cursor-pointer transition ${
+                      itemResult && !itemResult.passed ? 'border-red-200' : 'border-rule hover:border-rule-dark'
+                    }`}
                   >
                     <input
                       type="checkbox"
-                      checked={outlineChecklist[item.key]}
+                      checked={passed}
                       onChange={(e) => setOutlineChecklist({ ...outlineChecklist, [item.key]: e.target.checked })}
-                      className="rounded accent-[#9b2d20] shrink-0 cursor-pointer"
+                      className="rounded accent-[#9b2d20] shrink-0 cursor-pointer mt-0.5"
                     />
-                    <span className={`text-[11px] font-medium leading-tight ${
-                      outlineChecklist[item.key] ? 'text-ink-400 line-through' : 'text-ink'
-                    }`}>
-                      {item.title}
+                    <span className="min-w-0">
+                      <span className={`block text-[11px] font-medium leading-tight ${
+                        passed ? 'text-ink-400 line-through' : 'text-ink'
+                      }`}>
+                        {item.title}
+                      </span>
+                      {itemResult && !itemResult.passed && (
+                        <span className="block mt-1 text-[10px] text-red-700 leading-snug">
+                          {itemResult.reason}
+                        </span>
+                      )}
                     </span>
                   </label>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -825,6 +1122,12 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                         生成正文
                       </button>
                     </div>
+                    {chapterError && (
+                      <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 px-3 py-2 leading-relaxed">
+                        <span className="font-bold">生成失败：</span>{chapterError}
+                        <span className="ml-2 text-ink-400">（请在「阶段模型」中切换为可用模型）</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Dual Grid: Local Chapter Outline Requirements & Main Story Content */}

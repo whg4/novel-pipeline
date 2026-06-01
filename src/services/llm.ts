@@ -1,9 +1,19 @@
-import { APIConfig, Chapter, LLMConnectionTestResult, LLMProviderId, StageRole, StageAssignments } from '../types';
-import { createConfigForProvider, getProviderPreset, normalizeLegacyProvider } from './providers';
+import {
+  APIConfig,
+  Chapter,
+  LLMConnectionTestResult,
+  LLMProviderId,
+  OutlineChecklistKey,
+  OutlineValidationResult,
+  StageRole,
+  StageAssignments,
+} from '../types';
+import { createConfigForProvider, getProviderPreset, normalizeLegacyProvider, normalizeModelForProvider } from './providers';
 
 const STORAGE_KEY = 'novel_pipeline_api_config'; // 旧版单一全局配置（用于迁移）
 const PROVIDER_CONFIGS_KEY = 'novel_pipeline_provider_configs'; // 每供应商独立配置
 const STAGE_ASSIGN_KEY = 'novel_pipeline_stage_assignments'; // 阶段→供应商指派
+const STAGE_MODEL_OVERRIDES_KEY = 'novel_pipeline_stage_model_overrides'; // 阶段→模型名覆盖
 
 const DEFAULT_CONFIG: APIConfig = createConfigForProvider('deepseek');
 
@@ -17,6 +27,11 @@ const DEFAULT_STAGE_ASSIGNMENTS: StageAssignments = {
 
 type StreamTokenHandler = (text: string) => void;
 
+export interface OutlineChecklistPromptItem {
+  key: OutlineChecklistKey;
+  title: string;
+}
+
 function normalizeConfig(input?: Partial<APIConfig> | null): APIConfig {
   if (!input) return DEFAULT_CONFIG;
 
@@ -28,9 +43,8 @@ function normalizeConfig(input?: Partial<APIConfig> | null): APIConfig {
     apiStyle: input.apiStyle ?? preset.apiStyle,
     apiKey: input.apiKey ?? '',
     baseUrl: input.baseUrl || preset.defaultBaseUrl,
-    model: input.model || preset.defaultModel,
+    model: normalizeModelForProvider(provider, input.model),
     temperature: Number.isFinite(input.temperature) ? Number(input.temperature) : DEFAULT_CONFIG.temperature,
-    maxTokens: Number.isFinite(input.maxTokens) ? Number(input.maxTokens) : DEFAULT_CONFIG.maxTokens,
     extraHeaders: input.extraHeaders ?? {},
   };
 }
@@ -125,11 +139,38 @@ export function saveStageAssignments(assignments: StageAssignments) {
   localStorage.setItem(STAGE_ASSIGN_KEY, JSON.stringify(assignments));
 }
 
+type StageModelOverrides = Partial<Record<StageRole, string>>;
+
+export function getStageModelOverrides(): StageModelOverrides {
+  const json = localStorage.getItem(STAGE_MODEL_OVERRIDES_KEY);
+  if (json) {
+    try {
+      return JSON.parse(json) as StageModelOverrides;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+export function saveStageModelOverride(stage: StageRole, model: string) {
+  const overrides = getStageModelOverrides();
+  const normalizedModel = model.trim();
+  if (normalizedModel) {
+    overrides[stage] = normalizedModel;
+  } else {
+    delete overrides[stage];
+  }
+  localStorage.setItem(STAGE_MODEL_OVERRIDES_KEY, JSON.stringify(overrides));
+}
+
 // 取某阶段实际生效的模型配置
 export function getConfigForStage(stage: StageRole): APIConfig {
   const assignments = getStageAssignments();
   const provider = assignments[stage];
-  return getProviderConfig(provider);
+  const config = getProviderConfig(provider);
+  const modelOverride = getStageModelOverrides()[stage];
+  return modelOverride ? { ...config, model: normalizeModelForProvider(provider, modelOverride) } : config;
 }
 
 function buildUrl(baseUrl: string, suffix: string): string {
@@ -336,32 +377,50 @@ async function runGeminiStream(
   onToken: StreamTokenHandler,
 ): Promise<string> {
   const baseUrl = config.baseUrl.replace(/\/$/, '');
-  const model = encodeURIComponent(config.model);
-  const url = `${baseUrl}/models/${model}:streamGenerateContent?key=${encodeURIComponent(config.apiKey)}&alt=sse`;
+  const fallbackModels = getProviderPreset('gemini').modelSuggestions;
+  const modelsToTry = [config.model, ...fallbackModels].filter((model, index, models) => model && models.indexOf(model) === index);
+  let modelNotFoundError = '';
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(config.extraHeaders ?? {}),
-    },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: systemPrompt }],
+  for (const modelName of modelsToTry) {
+    const model = encodeURIComponent(modelName);
+    const url = `${baseUrl}/models/${model}:streamGenerateContent?key=${encodeURIComponent(config.apiKey)}&alt=sse`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(config.extraHeaders ?? {}),
       },
-      contents: [
-        {
-          role: 'user',
-          parts: [{ text: userPrompt }],
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: systemPrompt }],
         },
-      ],
-      generationConfig: {
-        temperature: config.temperature,
-      },
-    }),
-  });
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: userPrompt }],
+          },
+        ],
+        generationConfig: {
+          temperature: config.temperature,
+        },
+      }),
+    });
 
-  return handleResponse(response, onToken, extractGeminiText);
+    if (response.ok) {
+      return handleResponse(response, onToken, extractGeminiText);
+    }
+
+    const errorText = await response.text();
+    if (response.status === 404 && /not found|NOT_FOUND|not supported for generateContent/i.test(errorText)) {
+      modelNotFoundError = `接口请求失败（${response.status}）：${errorText || response.statusText}`;
+      continue;
+    }
+
+    throw new Error(`接口请求失败（${response.status}）：${errorText || response.statusText}`);
+  }
+
+  throw new Error(`${modelNotFoundError || 'Gemini 模型不可用。'} 请在「阶段模型」中切换为可用模型。`);
 }
 
 async function runLocalRelayStream(
@@ -458,12 +517,135 @@ export async function testLLMConnection(config: APIConfig): Promise<LLMConnectio
   }
 }
 
+function extractJsonObject(raw: string): string {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) return fenced[1].trim();
+
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1);
+
+  return trimmed;
+}
+
+function buildFailedValidation(
+  checklistItems: OutlineChecklistPromptItem[],
+  attempt: number,
+  summary: string,
+): OutlineValidationResult {
+  return {
+    passed: false,
+    attempt,
+    summary,
+    failedItems: checklistItems.map(item => item.key),
+    items: checklistItems.map(item => ({
+      key: item.key,
+      passed: false,
+      reason: summary,
+    })),
+  };
+}
+
+function parseOutlineValidationResult(
+  raw: string,
+  checklistItems: OutlineChecklistPromptItem[],
+  attempt: number,
+): OutlineValidationResult {
+  try {
+    const parsed = JSON.parse(extractJsonObject(raw)) as any;
+    const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+
+    const items = checklistItems.map(item => {
+      const found = rawItems.find((candidate: any) => candidate?.key === item.key);
+      return {
+        key: item.key,
+        passed: Boolean(found?.passed),
+        reason: typeof found?.reason === 'string' && found.reason.trim()
+          ? found.reason.trim()
+          : '模型未给出该项的有效审查理由。',
+      };
+    });
+
+    const failedItems = items.filter(item => !item.passed).map(item => item.key);
+
+    return {
+      passed: failedItems.length === 0,
+      attempt,
+      summary: typeof parsed.summary === 'string' && parsed.summary.trim()
+        ? parsed.summary.trim()
+        : failedItems.length === 0
+          ? '大纲通过全部自检项。'
+          : '大纲仍有自检项未通过。',
+      failedItems,
+      items,
+    };
+  } catch {
+    return buildFailedValidation(
+      checklistItems,
+      attempt,
+      '自检模型返回格式无法解析，请重新生成或手动检查大纲。',
+    );
+  }
+}
+
+export async function validateOutlineAgainstChecklist(
+  outline: string,
+  checklistItems: OutlineChecklistPromptItem[],
+  templateSkill: string,
+  projectContext: { background: string; characters: string; rawExample: string },
+  attempt: number,
+): Promise<OutlineValidationResult> {
+  const system = `你是网文仿写大纲的严格质检编辑。你只判断给定大纲是否满足自检清单，不重写大纲。
+必须输出严格 JSON，不要 Markdown，不要解释文字。JSON 结构如下：
+{"summary":"一句话总评","items":[{"key":"a_rhythm","passed":true,"reason":"理由"}]}
+每个 checklist key 都必须出现一次。passed 只能是 boolean。reason 用中文，必须具体指出通过依据或失败原因。`;
+
+  const checklistText = checklistItems
+    .map(item => `- ${item.key}: ${item.title}`)
+    .join('\n');
+
+  const user = `
+--- 仿写大纲输出模板规则 ---
+${templateSkill || '未提供模板全文，请按自检清单执行。'}
+
+--- 自检清单 ---
+${checklistText}
+
+--- 项目背景 ---
+${projectContext.background || '未填写'}
+
+--- 人物设定 ---
+${projectContext.characters || '未填写'}
+
+--- 参考原文 ---
+${projectContext.rawExample || '未填写'}
+
+--- 待审查大纲 ---
+${outline}
+
+请逐项审查：只要某项缺失、空泛、与参考节奏不对应、或证据链/时间线/道具流转不闭合，就判 false。
+只输出 JSON。`;
+
+  let raw = '';
+  try {
+    const returned = await runLLMStream('review', system, user, token => {
+      raw += token;
+    });
+    return parseOutlineValidationResult(raw || returned, checklistItems, attempt);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return buildFailedValidation(checklistItems, attempt, `审查模型调用失败：${msg}`);
+  }
+}
+
 // Compile final outline prompt
 export function compileOutlinePrompt(
   example: string,
   background: string,
   characters: string,
-  templateSkill: string
+  templateSkill: string,
+  validationFeedback?: string
 ): { system: string; user: string } {
   const system = `You are a high-level creative writing AI that specializes in drafting best-selling web novel outlines. 
 You must strictly follow the provided "仿写大纲输出格式模板 v3.0" rules.
@@ -486,6 +668,8 @@ ${characters || 'Standard characters'}
 
 --- REFERENCE EXAMPLE STORY (To imitate 1:1 in tension & emotion line) ---
 ${example}
+
+${validationFeedback ? `--- PREVIOUS SELF-CHECK FAILURES TO FIX ---\n${validationFeedback}\n` : ''}
 
 Generate a beautiful, comprehensive, and highly-detailed novel outline corresponding exactly to the template rules above.
 `;

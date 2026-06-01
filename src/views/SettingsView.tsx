@@ -213,7 +213,7 @@ export default function SettingsView() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-rule pt-4">
+          <div className="border-t border-rule pt-4">
             <div className="space-y-1.5">
               <div className="flex justify-between items-center">
                 <label className="text-xs font-bold text-ink-600 uppercase tracking-wider">创意温度</label>
@@ -234,24 +234,6 @@ export default function SettingsView() {
                 <span>稳一点</span>
                 <span>放开写</span>
               </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <div className="flex justify-between items-center">
-                <label className="text-xs font-bold text-ink-600 uppercase tracking-wider">最大输出 Token</label>
-                <span className="text-xs font-mono font-bold text-accent bg-accent-faint border border-accent/20 px-2 py-0.5">
-                  {config.maxTokens}
-                </span>
-              </div>
-              <input
-                type="number"
-                min="200"
-                max="32000"
-                step="100"
-                value={config.maxTokens}
-                onChange={(event) => setConfig({ ...config, maxTokens: parseInt(event.target.value, 10) })}
-                className="w-full bg-paper-50 border border-rule px-3 py-1.5 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/50"
-              />
             </div>
           </div>
 
