@@ -20,6 +20,60 @@ interface PipelineViewProps {
 const OUTLINE_MAX_ATTEMPTS = 3;
 
 type GenerationTask = 'auto' | 'outline' | 'chapter' | 'review' | 'marketing' | 'title';
+type AutoPipelinePhase = 'outline' | 'sync' | 'chapter' | 'review' | 'blurb' | 'title' | 'cover' | 'done';
+interface AutoPipelineResumeState {
+  phase: AutoPipelinePhase;
+  currentOutline: string;
+  outlineAttempt: number;
+  validationFeedback: string;
+  chapterIndex: number;
+  chapterId?: number;
+  partialText: string;
+  totalSteps: number;
+}
+const AUTO_PHASE_ORDER: Record<AutoPipelinePhase, number> = {
+  outline: 0,
+  sync: 1,
+  chapter: 2,
+  review: 3,
+  blurb: 4,
+  title: 5,
+  cover: 6,
+  done: 7,
+};
+
+const AUTO_RESUME_STORAGE_PREFIX = 'novel_pipeline_auto_resume_state';
+
+function getAutoResumeStorageKey(projectId: number): string {
+  return `${AUTO_RESUME_STORAGE_PREFIX}:${projectId}`;
+}
+
+function loadAutoResumeState(projectId: number): AutoPipelineResumeState | null {
+  try {
+    const raw = localStorage.getItem(getAutoResumeStorageKey(projectId));
+    return raw ? JSON.parse(raw) as AutoPipelineResumeState : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveAutoResumeState(projectId: number, state: AutoPipelineResumeState) {
+  localStorage.setItem(getAutoResumeStorageKey(projectId), JSON.stringify(state));
+}
+
+function clearAutoResumeState(projectId: number) {
+  localStorage.removeItem(getAutoResumeStorageKey(projectId));
+}
+
+function getAutoProgressCurrent(state: AutoPipelineResumeState): number {
+  if (state.phase === 'outline') return 1;
+  if (state.phase === 'sync') return 2;
+  if (state.phase === 'chapter') return 2 + state.chapterIndex * 2 + 1;
+  if (state.phase === 'review') return 2 + state.chapterIndex * 2 + 2;
+  if (state.phase === 'blurb') return Math.max(1, state.totalSteps - 1);
+  if (state.phase === 'title' || state.phase === 'cover') return state.totalSteps;
+  return state.totalSteps;
+}
 
 const OUTLINE_CHECKLIST_ITEMS: { key: OutlineChecklistKey; title: string }[] = [
   { key: 'a_rhythm', title: '1:1 内核情绪、节奏、爽点复刻' },
@@ -53,6 +107,19 @@ function buildValidationFeedback(result: OutlineValidationResult): string {
     .filter(item => !item.passed)
     .map(item => `- ${item.key}: ${item.reason}`)
     .join('\n');
+}
+
+function stripLogicReview(content: string): string {
+  const splitIndex = content.indexOf('---');
+  return splitIndex !== -1 ? content.substring(0, splitIndex).trim() : content.trim();
+}
+
+function sanitizeMarkdownFileName(name: string): string {
+  return (name || '小说正文')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || '小说正文';
 }
 
 // 从大纲文本解析章节（格式：### 第 X 章：标题 或 ### 第X章:标题）
@@ -188,6 +255,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // 自动流水线状态
   const [isAutoRunning, setIsAutoRunning] = useState(false);
   const [autoProgress, setAutoProgress] = useState<{ step: string; current: number; total: number } | null>(null);
+  const autoResumeRef = useRef<AutoPipelineResumeState | null>(null);
   const autoPauseRef = useRef(false);
   const generationAbortRef = useRef<AbortController | null>(null);
   const pausedTaskRef = useRef<GenerationTask | null>(null);
@@ -200,6 +268,28 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setOutlineValidationResult(project.outlineValidationResult);
     setOutlineChecklist(checklistStateFromValidation(project.outlineValidationResult));
   }, [project?.outlineValidationUpdatedAt]);
+
+  useEffect(() => {
+    const savedAutoState = loadAutoResumeState(projectId);
+    if (!savedAutoState || savedAutoState.phase === 'done') return;
+
+    autoResumeRef.current = savedAutoState;
+    setPausedTask('auto');
+    setPauseMessage('检测到未完成的一键全自动任务，点击继续将从当前步骤接着执行。');
+    setAutoProgress({
+      step: '已暂停（点击继续）',
+      current: getAutoProgressCurrent(savedAutoState),
+      total: savedAutoState.totalSteps || 7,
+    });
+
+    if (savedAutoState.partialText) {
+      if (savedAutoState.phase === 'outline') setGenerationOutput(savedAutoState.partialText);
+      if (savedAutoState.phase === 'review') setLogicReviewOutput(savedAutoState.partialText);
+      if (savedAutoState.phase === 'blurb') setBlurbsOutput(savedAutoState.partialText);
+      if (savedAutoState.phase === 'title') setTitleOutput(savedAutoState.partialText);
+      if (savedAutoState.phase === 'cover') setCoverPrompt(savedAutoState.partialText);
+    }
+  }, [projectId]);
 
   const beginGenerationTask = (task: GenerationTask, resume = false) => {
     const controller = new AbortController();
@@ -603,12 +693,39 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
   // Helper copy text
   const handleCopyText = (txt: string) => {
-    // Extract everything above "---" if found (to get clean story separate from log check)
-    const splitIndex = txt.indexOf('---');
-    const cleanDraft = splitIndex !== -1 ? txt.substring(0, splitIndex).trim() : txt;
+    const cleanDraft = stripLogicReview(txt);
 
     navigator.clipboard.writeText(cleanDraft);
     alert('正文已复制到剪贴板（审查内容已排除）。');
+  };
+
+  const handleExportNovelMarkdown = () => {
+    const exportChapters = [...chapters]
+      .sort((a, b) => a.chapterNumber - b.chapterNumber)
+      .map((chapter) => ({
+        ...chapter,
+        content: chapter.id === activeChapterId ? editingDraft : chapter.content,
+      }))
+      .filter((chapter) => stripLogicReview(chapter.content || '').length > 0);
+
+    if (exportChapters.length === 0) {
+      alert('还没有可导出的章节正文。');
+      return;
+    }
+
+    const manuscript = exportChapters.map((chapter) => {
+      const title = chapter.title || `第 ${chapter.chapterNumber} 章`;
+      return `## ${title}\n\n${stripLogicReview(chapter.content || '')}`;
+    }).join('\n\n');
+
+    const markdown = `# ${project.title || '未命名小说'}\n\n${manuscript}\n`;
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${sanitizeMarkdownFileName(project.title)}-小说正文.md`;
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   // 单章 AI 逻辑审查
@@ -648,6 +765,20 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const handleRunAutoPipeline = async (resume = false) => {
     if (!project || isGenerating || isAutoRunning) return;
     const streamOptions = beginGenerationTask('auto', resume);
+    const savedAutoState = resume ? autoResumeRef.current ?? loadAutoResumeState(projectId) : null;
+    const autoState: AutoPipelineResumeState = savedAutoState
+      ? savedAutoState
+      : {
+        phase: project.outline && project.outline.length >= 50 ? 'sync' : 'outline',
+        currentOutline: project.outline || '',
+        outlineAttempt: 1,
+        validationFeedback: '',
+        chapterIndex: 0,
+        partialText: '',
+        totalSteps: 7,
+      };
+    autoResumeRef.current = autoState;
+
     setIsAutoRunning(true);
     setIsGenerating(true);
     autoPauseRef.current = false;
@@ -663,29 +794,38 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       const outlineTemplate = skills.find(s => s.key === 'outline_template')?.content || '';
 
       // Step 1: 生成大纲（若已有则跳过）
-      let currentOutline = project.outline;
-      if (!currentOutline || currentOutline.length < 50) {
-        let validationFeedback = '';
+      let currentOutline = autoState.currentOutline || project.outline;
+      if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.outline && (!currentOutline || currentOutline.length < 50 || autoState.partialText)) {
         let latestValidation: OutlineValidationResult | null = null;
 
-        for (let attempt = 1; attempt <= OUTLINE_MAX_ATTEMPTS; attempt++) {
+        for (let attempt = autoState.outlineAttempt; attempt <= OUTLINE_MAX_ATTEMPTS; attempt++) {
+          autoState.phase = 'outline';
+          autoState.outlineAttempt = attempt;
           setAutoProgress({ step: `生成大纲（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）`, current: 1, total: 7 });
           setOutlineGenerationStatus(`自动流水线生成大纲中（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）...`);
-          setGenerationOutput('');
+          const resumingOutline = resume && autoState.partialText && autoState.outlineAttempt === attempt;
+          setGenerationOutput(resumingOutline ? autoState.partialText : '');
 
           const compiled = compileOutlinePrompt(
             project.rawExample,
             project.background,
             project.characters,
             outlineTemplate,
-            validationFeedback
+            autoState.validationFeedback
           );
-          let acc = '';
+          if (resumingOutline) {
+            compiled.user += `\n--- 已生成但暂停的大纲片段 ---\n${autoState.partialText}\n\n请从该片段后继续补全，不要重写已经输出的部分。`;
+          }
+          let acc = resumingOutline ? autoState.partialText : '';
           await runLLMStream('outline', compiled.system, compiled.user, tok => {
             acc += tok;
+            autoState.partialText = acc;
+            autoState.currentOutline = acc;
             setGenerationOutput(acc);
           }, streamOptions);
           currentOutline = acc;
+          autoState.currentOutline = acc;
+          autoState.partialText = '';
           checkPause();
 
           setAutoProgress({ step: `自检大纲（第 ${attempt}/${OUTLINE_MAX_ATTEMPTS} 轮）`, current: 1, total: 7 });
@@ -711,10 +851,14 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               outlineValidationResult: latestValidation,
               outlineValidationUpdatedAt: Date.now(),
             });
+            autoState.phase = 'sync';
+            autoState.outlineAttempt = 1;
+            autoState.validationFeedback = '';
             break;
           }
 
-          validationFeedback = buildValidationFeedback(latestValidation);
+          autoState.validationFeedback = buildValidationFeedback(latestValidation);
+          autoState.outlineAttempt = attempt + 1;
           if (attempt === OUTLINE_MAX_ATTEMPTS) {
             await db.projects.update(projectId, {
               outline: acc,
@@ -730,12 +874,17 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       }
 
       // Step 2: 解析并同步章节结构
-      setAutoProgress({ step: '解析章节结构', current: 2, total: 7 });
-      const parsedCount = await syncOutlineChaptersToDb(currentOutline, projectId);
-      if (parsedCount === 0) {
-        throw new Error('未能从大纲中解析出章节（请确认大纲包含“### 第 X 章：标题”格式）');
+      if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.sync) {
+        autoState.phase = 'sync';
+        setAutoProgress({ step: '解析章节结构', current: 2, total: 7 });
+        const parsedCount = await syncOutlineChaptersToDb(currentOutline, projectId);
+        if (parsedCount === 0) {
+          throw new Error('未能从大纲中解析出章节（请确认大纲包含“### 第 X 章：标题”格式）');
+        }
+        autoState.phase = 'chapter';
+        autoState.partialText = '';
+        checkPause();
       }
-      checkPause();
 
       // Step 3-N: 逐章生成正文 + 逻辑审查
       const allChapters = await db.chapters
@@ -743,71 +892,145 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         .sortBy('chapterNumber');
 
       const totalSteps = 2 + allChapters.length * 2 + 2;
+      autoState.totalSteps = totalSteps;
 
-      for (let i = 0; i < allChapters.length; i++) {
-        const ch = allChapters[i];
-        const prevChs = allChapters.slice(0, i);
+      if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.review) {
+        const startIndex = autoState.phase === 'chapter' || autoState.phase === 'review' ? autoState.chapterIndex : 0;
+        for (let i = startIndex; i < allChapters.length; i++) {
+          const ch = allChapters[i];
+          const prevChs = allChapters.slice(0, i);
+          const resumingChapter = resume && autoState.phase === 'chapter' && autoState.chapterIndex === i && autoState.partialText;
 
-        setAutoProgress({ step: `生成第 ${ch.chapterNumber} 章正文`, current: 2 + i * 2 + 1, total: totalSteps });
-        if (!ch.content || ch.content.length < 100) {
-          const chComp = compileChapterPrompt(
-            currentOutline, ch.chapterNumber, ch.outlineSection, prevChs,
-            skills, project.genre === 'classic-wolf', project.genre === 'female-slap'
-          );
-          let draftAcc = '';
-          await runLLMStream('chapter', chComp.system, chComp.user, tok => {
-            draftAcc += tok;
+          setAutoProgress({ step: `生成第 ${ch.chapterNumber} 章正文`, current: 2 + i * 2 + 1, total: totalSteps });
+          if (resumingChapter || !ch.content || ch.content.length < 100) {
+            autoState.phase = 'chapter';
+            autoState.chapterIndex = i;
+            autoState.chapterId = ch.id;
+            const chComp = compileChapterPrompt(
+              currentOutline, ch.chapterNumber, ch.outlineSection, prevChs,
+              skills, project.genre === 'classic-wolf', project.genre === 'female-slap'
+            );
+            if (resumingChapter) {
+              chComp.user += `\n--- 已生成但暂停的正文片段 ---\n${autoState.partialText}\n\n请从该片段最后一句之后继续续写，只输出后续正文，不要重复已经写过的内容。`;
+            }
+            let draftAcc = resumingChapter ? autoState.partialText : '';
+            await runLLMStream('chapter', chComp.system, chComp.user, tok => {
+              draftAcc += tok;
+              autoState.partialText = draftAcc;
+              if (activeChapterId === ch.id) setEditingContent(draftAcc);
+            }, streamOptions);
+            await db.chapters.update(ch.id!, { content: draftAcc, lastEdited: Date.now() });
+            allChapters[i] = { ...ch, content: draftAcc };
+            autoState.partialText = '';
             if (activeChapterId === ch.id) setEditingContent(draftAcc);
-          }, streamOptions);
-          await db.chapters.update(ch.id!, { content: draftAcc, lastEdited: Date.now() });
-          allChapters[i] = { ...ch, content: draftAcc };
-          if (activeChapterId === ch.id) setEditingContent(draftAcc);
-        }
-        checkPause();
+          }
+          checkPause();
 
-        setAutoProgress({ step: `审查第 ${ch.chapterNumber} 章逻辑`, current: 2 + i * 2 + 2, total: totalSteps });
-        const content = allChapters[i].content;
-        if (content && logicSkill) {
-          const reviewComp = compileLogicReviewPrompt(content, ch.chapterNumber, logicSkill);
-          let reviewAcc = '';
-          await runLLMStream('review', reviewComp.system, reviewComp.user, tok => { reviewAcc += tok; }, streamOptions);
-          await db.chapters.update(ch.id!, { logicCheckLog: reviewAcc });
-          if (activeChapterId === ch.id) setLogicReviewOutput(reviewAcc);
+          setAutoProgress({ step: `审查第 ${ch.chapterNumber} 章逻辑`, current: 2 + i * 2 + 2, total: totalSteps });
+          const content = allChapters[i].content;
+          if (content && logicSkill) {
+            const resumingReview = resume && autoState.phase === 'review' && autoState.chapterIndex === i && autoState.partialText;
+            autoState.phase = 'review';
+            autoState.chapterIndex = i;
+            autoState.chapterId = ch.id;
+            const reviewComp = compileLogicReviewPrompt(content, ch.chapterNumber, logicSkill);
+            if (resumingReview) {
+              reviewComp.user += `\n--- 已生成但暂停的审查片段 ---\n${autoState.partialText}\n\n请从该片段后继续补全审查报告，不要重复已经输出的部分。`;
+            }
+            let reviewAcc = resumingReview ? autoState.partialText : '';
+            await runLLMStream('review', reviewComp.system, reviewComp.user, tok => {
+              reviewAcc += tok;
+              autoState.partialText = reviewAcc;
+            }, streamOptions);
+            await db.chapters.update(ch.id!, { logicCheckLog: reviewAcc });
+            autoState.partialText = '';
+            if (activeChapterId === ch.id) setLogicReviewOutput(reviewAcc);
+          }
+          autoState.phase = 'chapter';
+          autoState.chapterIndex = i + 1;
+          checkPause();
         }
-        checkPause();
+        autoState.phase = 'blurb';
+        autoState.partialText = '';
       }
 
       // 生成简介
-      setAutoProgress({ step: '生成爆款简介', current: totalSteps - 1, total: totalSteps });
-      const latestChapters = await db.chapters.where('projectId').equals(projectId).sortBy('chapterNumber');
-      const sampleText = latestChapters.slice(0, 3).map(c => c.content).join('\n\n');
-      const blurbComp = compileBlurbPrompt(currentOutline, sampleText, blurbSkill);
-      let blurbAcc = '';
-      await runLLMStream('marketing', blurbComp.system, blurbComp.user, tok => { blurbAcc += tok; setBlurbsOutput(blurbAcc); }, streamOptions);
-      checkPause();
+      if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.blurb) {
+        autoState.phase = 'blurb';
+        setAutoProgress({ step: '生成爆款简介', current: totalSteps - 1, total: totalSteps });
+        const latestChapters = await db.chapters.where('projectId').equals(projectId).sortBy('chapterNumber');
+        const sampleText = latestChapters.slice(0, 3).map(c => c.content).join('\n\n');
+        const blurbComp = compileBlurbPrompt(currentOutline, sampleText, blurbSkill);
+        let blurbAcc = resume && autoState.partialText ? autoState.partialText : '';
+        await runLLMStream('marketing', blurbComp.system, blurbComp.user, tok => {
+          blurbAcc += tok;
+          autoState.partialText = blurbAcc;
+          setBlurbsOutput(blurbAcc);
+        }, streamOptions);
+        autoState.partialText = '';
+        autoState.phase = 'title';
+        checkPause();
+      }
 
       // 生成书名与封面
-      setAutoProgress({ step: '生成书名与封面提示词', current: totalSteps, total: totalSteps });
-      const titleComp = compileTitlePrompt(currentOutline);
-      let titleAcc = '';
-      await runLLMStream('marketing', titleComp.system, titleComp.user, tok => { titleAcc += tok; }, streamOptions);
-      await db.projects.update(projectId, { titleCandidates: titleAcc });
-      setTitleOutput(titleAcc);
+      if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.title) {
+        autoState.phase = 'title';
+        setAutoProgress({ step: '生成书名', current: totalSteps, total: totalSteps });
+        const titleComp = compileTitlePrompt(currentOutline);
+        let titleAcc = resume && autoState.partialText ? autoState.partialText : '';
+        await runLLMStream('marketing', titleComp.system, titleComp.user, tok => {
+          titleAcc += tok;
+          autoState.partialText = titleAcc;
+          setTitleOutput(titleAcc);
+        }, streamOptions);
+        await db.projects.update(projectId, { titleCandidates: titleAcc });
+        setTitleOutput(titleAcc);
+        autoState.partialText = '';
+        autoState.phase = 'cover';
+      }
 
-      const coverComp = compileCoverPrompt(currentOutline, project.genre);
-      let coverAcc = '';
-      await runLLMStream('marketing', coverComp.system, coverComp.user, tok => { coverAcc += tok; }, streamOptions);
-      await db.projects.update(projectId, { coverPrompt: coverAcc });
-      setCoverPrompt(coverAcc);
+      if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.cover) {
+        autoState.phase = 'cover';
+        setAutoProgress({ step: '生成封面提示词', current: totalSteps, total: totalSteps });
+        const coverComp = compileCoverPrompt(currentOutline, project.genre);
+        let coverAcc = resume && autoState.partialText ? autoState.partialText : '';
+        await runLLMStream('marketing', coverComp.system, coverComp.user, tok => {
+          coverAcc += tok;
+          autoState.partialText = coverAcc;
+          setCoverPrompt(coverAcc);
+        }, streamOptions);
+        await db.projects.update(projectId, { coverPrompt: coverAcc });
+        setCoverPrompt(coverAcc);
+        autoState.partialText = '';
+      }
 
+      autoState.phase = 'done';
+      autoResumeRef.current = null;
+      clearAutoResumeState(projectId);
       setAutoProgress({ step: '全部完成 ✓', current: totalSteps, total: totalSteps });
     } catch (e: any) {
       if (isPausedError(e)) {
         wasPaused = true;
-        markTaskPaused('auto');
+        if (autoState.partialText) {
+          if (autoState.phase === 'outline') {
+            await db.projects.update(projectId, { outline: autoState.partialText, outlineValidationUpdatedAt: Date.now() });
+          } else if ((autoState.phase === 'chapter' || autoState.phase === 'review') && autoState.chapterId) {
+            await db.chapters.update(autoState.chapterId, autoState.phase === 'chapter'
+              ? { content: autoState.partialText, lastEdited: Date.now() }
+              : { logicCheckLog: autoState.partialText });
+          } else if (autoState.phase === 'title') {
+            await db.projects.update(projectId, { titleCandidates: autoState.partialText });
+          } else if (autoState.phase === 'cover') {
+            await db.projects.update(projectId, { coverPrompt: autoState.partialText });
+          }
+        }
+        saveAutoResumeState(projectId, autoState);
+        markTaskPaused('auto', '已暂停，点击继续将从当前步骤接着执行。');
         setAutoProgress(prev => prev ? { ...prev, step: '已暂停（点击继续）' } : null);
       } else {
         alert(`自动流水线执行出错：${e.message}`);
+        autoResumeRef.current = null;
+        clearAutoResumeState(projectId);
         setAutoProgress(null);
       }
     } finally {
@@ -827,6 +1050,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
+          <button
+            onClick={handleExportNovelMarkdown}
+            className="flex items-center gap-1.5 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-xs font-bold px-3 py-1.5 transition"
+          >
+            <Download size={12} /> 导出小说
+          </button>
+
           {/* 一键全自动按鈕 */}
           <button
             onClick={() => handleRunAutoPipeline()}
