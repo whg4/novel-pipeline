@@ -1,9 +1,19 @@
-import { APIConfig, Chapter, LLMConnectionTestResult } from '../types';
+import { APIConfig, Chapter, LLMConnectionTestResult, LLMProviderId, StageRole, StageAssignments } from '../types';
 import { createConfigForProvider, getProviderPreset, normalizeLegacyProvider } from './providers';
 
-const STORAGE_KEY = 'novel_pipeline_api_config';
+const STORAGE_KEY = 'novel_pipeline_api_config'; // 旧版单一全局配置（用于迁移）
+const PROVIDER_CONFIGS_KEY = 'novel_pipeline_provider_configs'; // 每供应商独立配置
+const STAGE_ASSIGN_KEY = 'novel_pipeline_stage_assignments'; // 阶段→供应商指派
 
 const DEFAULT_CONFIG: APIConfig = createConfigForProvider('deepseek');
+
+// 默认阶段指派：大纲→OpenAI、正文→Gemini、逻辑审查→Gemini、营销→OpenAI
+const DEFAULT_STAGE_ASSIGNMENTS: StageAssignments = {
+  outline: 'openai',
+  chapter: 'gemini',
+  review: 'gemini',
+  marketing: 'openai',
+};
 
 type StreamTokenHandler = (text: string) => void;
 
@@ -39,6 +49,87 @@ export function getAPIConfig(): APIConfig {
 
 export function saveAPIConfig(config: APIConfig) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeConfig(config)));
+}
+
+// ----------------------------------------------------
+// 多供应商独立配置存储（每个供应商单独保存 Key/BaseURL/Model 等）
+// ----------------------------------------------------
+type ProviderConfigMap = Partial<Record<LLMProviderId, APIConfig>>;
+
+function readProviderConfigs(): ProviderConfigMap {
+  const json = localStorage.getItem(PROVIDER_CONFIGS_KEY);
+  if (json) {
+    try {
+      return JSON.parse(json) as ProviderConfigMap;
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+// 一次性迁移：把旧版单一全局配置塞进对应供应商槽位
+function migrateLegacyConfig(map: ProviderConfigMap): ProviderConfigMap {
+  if (Object.keys(map).length > 0) return map;
+  const legacy = localStorage.getItem(STORAGE_KEY);
+  if (legacy) {
+    try {
+      const parsed = normalizeConfig(JSON.parse(legacy));
+      const migrated: ProviderConfigMap = { [parsed.provider]: parsed };
+      localStorage.setItem(PROVIDER_CONFIGS_KEY, JSON.stringify(migrated));
+      return migrated;
+    } catch {
+      return map;
+    }
+  }
+  return map;
+}
+
+export function getProviderConfigs(): ProviderConfigMap {
+  return migrateLegacyConfig(readProviderConfigs());
+}
+
+// 获取某供应商已保存的配置；未保存过则返回该供应商默认配置
+export function getProviderConfig(provider: LLMProviderId): APIConfig {
+  const map = getProviderConfigs();
+  const saved = map[provider];
+  if (saved) return normalizeConfig(saved);
+  return createConfigForProvider(provider);
+}
+
+// 仅保存当前供应商的配置（Key 各自独立，互不覆盖）
+export function saveProviderConfig(config: APIConfig) {
+  const normalized = normalizeConfig(config);
+  const map = getProviderConfigs();
+  map[normalized.provider] = normalized;
+  localStorage.setItem(PROVIDER_CONFIGS_KEY, JSON.stringify(map));
+}
+
+// ----------------------------------------------------
+// 阶段→供应商指派
+// ----------------------------------------------------
+export function getStageAssignments(): StageAssignments {
+  const json = localStorage.getItem(STAGE_ASSIGN_KEY);
+  if (json) {
+    try {
+      const parsed = JSON.parse(json) as Partial<StageAssignments>;
+      return { ...DEFAULT_STAGE_ASSIGNMENTS, ...parsed };
+    } catch {
+      return DEFAULT_STAGE_ASSIGNMENTS;
+    }
+  }
+  return DEFAULT_STAGE_ASSIGNMENTS;
+}
+
+export function saveStageAssignments(assignments: StageAssignments) {
+  localStorage.setItem(STAGE_ASSIGN_KEY, JSON.stringify(assignments));
+}
+
+// 取某阶段实际生效的模型配置
+export function getConfigForStage(stage: StageRole): APIConfig {
+  const assignments = getStageAssignments();
+  const provider = assignments[stage];
+  return getProviderConfig(provider);
 }
 
 function buildUrl(baseUrl: string, suffix: string): string {
@@ -128,15 +219,57 @@ async function handleResponse(
   }
 
   const contentType = response.headers.get('content-type') || '';
-  if (contentType.includes('text/event-stream') || response.body) {
-    const streamed = await consumeEventStream(response, onToken, extractor);
-    if (streamed) return streamed;
+
+  // 明确是 SSE 流式响应
+  if (contentType.includes('text/event-stream')) {
+    return consumeEventStream(response, onToken, extractor);
   }
 
-  const json = await response.json();
-  const text = extractor(json);
-  if (text) onToken(text);
-  return text;
+  // 明确是 JSON 响应（非流式）
+  if (contentType.includes('application/json')) {
+    const json = await response.json();
+    const text = extractor(json);
+    if (text) onToken(text);
+    return text;
+  }
+
+  // Content-Type 未知：尝试文本读取后解析（某些代理不设置正确的 Content-Type）
+  const raw = await response.text();
+  // 尝试按 SSE 行格式解析
+  let accumulated = '';
+  for (const line of raw.split('\n')) {
+    const clean = line.trim();
+    if (!clean || clean === 'data: [DONE]' || clean.startsWith('event:')) continue;
+    const jsonText = clean.startsWith('data: ') ? clean.slice(6) : clean;
+    try {
+      const parsed = JSON.parse(jsonText);
+      const chunk = extractor(parsed);
+      if (chunk) {
+        accumulated += chunk;
+        onToken(chunk);
+      }
+    } catch {
+      // 非 JSON 行，忽略
+    }
+  }
+  if (accumulated) return accumulated;
+
+  // 最后回退：整体按 JSON 解析
+  try {
+    const json = JSON.parse(raw);
+    const text = extractor(json);
+    if (text) onToken(text);
+    return text;
+  } catch {
+    // 纯文本响应
+    if (raw) onToken(raw);
+    return raw;
+  }
+}
+
+// Newer OpenAI models (o1, o3, o4, gpt-5+) require max_completion_tokens instead of max_tokens
+function useCompletionTokens(model: string): boolean {
+  return /^(o\d|gpt-5)/i.test(model);
 }
 
 async function runOpenAICompatibleStream(
@@ -162,7 +295,9 @@ async function runOpenAICompatibleStream(
         { role: 'user', content: userPrompt },
       ],
       temperature: config.temperature,
-      max_tokens: config.maxTokens,
+      ...(useCompletionTokens(config.model)
+        ? { max_completion_tokens: config.maxTokens }
+        : { max_tokens: config.maxTokens }),
       stream: true,
     }),
   });
@@ -292,11 +427,12 @@ async function runLLMStreamWithConfig(
 }
 
 export async function runLLMStream(
+  stage: StageRole,
   systemPrompt: string,
   userPrompt: string,
   onToken: StreamTokenHandler,
 ): Promise<string> {
-  return runLLMStreamWithConfig(getAPIConfig(), systemPrompt, userPrompt, onToken);
+  return runLLMStreamWithConfig(getConfigForStage(stage), systemPrompt, userPrompt, onToken);
 }
 
 export async function testLLMConnection(config: APIConfig): Promise<LLMConnectionTestResult> {
@@ -379,6 +515,7 @@ export function compileChapterPrompt(
 ): { system: string; user: string } {
   const degreaseSkill = skills.find(s => s.key === 'degrease')?.content || '';
   const connectSkill = skills.find(s => s.key === 'connect_skills')?.content || '';
+  const logicCheckSkill = skills.find(s => s.key === 'logic_check')?.content || '';
   const werewolfSkill = isWerewolf ? (skills.find(s => s.key === 'wolf_setting')?.content || '') : '';
   const femaleSlapSkill = isFemaleSlap ? (skills.find(s => s.key === 'female_slap')?.content || '') : '';
 
@@ -391,6 +528,7 @@ ${degreaseSkill}
 --- CONNECTION RULES & FLOW ---
 ${connectSkill}
 
+${logicCheckSkill ? `\n--- 逻辑一致性规则（写作过程中随时自查，不在正文中输出）---\n${logicCheckSkill}` : ''}
 ${isWerewolf ? `\n--- WEREWOLF WORLD SETTINGS (Classic Tribal Code) ---\n${werewolfSkill}` : ''}
 ${isFemaleSlap ? `\n--- FEMALE PROTAGONIST CLIMAX / SLAPBACK (打脸闭环) ---\n${femaleSlapSkill}` : ''}
 
@@ -430,24 +568,88 @@ export function compileBlurbPrompt(
   customDraft: string,
   blurbSkill: string
 ): { system: string; user: string } {
-  const system = `You are a master of writing viral novel back-cover blurbs (简介/导语). 
-Your output must follow the rules of '爆款网文简介（导语）生成 Skill v4.1'.
-It should be:
-- 220 to 380 characters.
-- Structured into two scenes (当众退婚/切割 scene + 深夜后悔/跪求 scene).
-- Include high tension lines or extreme scenes.
-- Free of summaries or abstract descriptions. Ensure it's dramatic like a preview snippet.`;
+  const system = `你是一位专精网文爆款简介（导语）写作的专家。必须严格遵循《爆款网文简介（导语）生成 Skill v4.1》的所有规则。
+简介要求：220-380 字，包含两场戏（当众退婚/切割 + 深夜后悔/跪求），至少一句高冲突台词，不讲梗概只呈现现场片段。`;
 
   const user = `
---- BLURB DESIGN GUIDELINES ---
+--- 简介写作规则 ---
 ${blurbSkill}
 
---- OVERALL BOOK OUTLINE ---
+--- 本书完整大纲 ---
 ${outline}
 
-${customDraft ? `--- ACTUAL REPRESENTATIVE CHAPTER TEXTS ---\n${customDraft}` : ''}
+${customDraft ? `--- 代表性正文片段（前三章）---\n${customDraft}` : ''}
 
-Generate 3 alternative high-impact, click-grabbing blurbs according to the rules above.
+请根据以上规则和大纲，生成 3 个风格各异的高点击率爆款简介。
+`;
+
+  return { system, user };
+}
+
+// Compile LLM logic review prompt for a single chapter
+export function compileLogicReviewPrompt(
+  chapterContent: string,
+  chapterNum: number,
+  logicCheckSkill: string
+): { system: string; user: string } {
+  const system = `你是一位专业的小说逻辑审查编辑，严格依照《小说正文逻辑审查流程 Skill v3.2》执行审查。只输出格式化审查报告，不做其他说明。`;
+
+  const user = `
+--- 逻辑审查规则（Skill v3.2）---
+${logicCheckSkill}
+
+--- 需要审查的第 ${chapterNum} 章正文 ---
+${chapterContent}
+
+请严格按照以下格式输出审查报告：
+【逻辑自查 - 第${chapterNum}章】
+时间线：无冲突 / 有冲突（列明具体问题）
+地点：无冲突 / 有冲突（列明具体问题）
+道具：无冲突 / 有冲突（重点排查：获取时间、名称一致性、材质常识）
+人物与行为：无冲突 / 有冲突（重点排查：已知信息行为悖论）
+情感节奏：章末钩子已设置 / 未设置（说明钩子内容）
+`;
+
+  return { system, user };
+}
+
+// Compile book title candidates prompt
+export function compileTitlePrompt(outline: string): { system: string; user: string } {
+  const system = `你是一位专精爆款网文书名创作的专家。书名要简洁有力、带强烈情绪张力、适合在各平台传播，使用大众易懂词汇，避免生僻或高大上词汇。`;
+
+  const user = `
+--- 以下是本书的完整大纲 ---
+${outline}
+
+请根据上述大纲，生成 8 个备选书名，风格多样（含霸气型、暧昧拉扯型、悬念型），每个书名后附一句不超过 20 字的推荐理由。
+输出格式：
+1. 《书名》——理由
+2. 《书名》——理由
+...（共 8 个）
+`;
+
+  return { system, user };
+}
+
+// Compile AI image cover prompt
+export function compileCoverPrompt(outline: string, genre: string): { system: string; user: string } {
+  const genreLabel = genre === 'classic-wolf' ? '欧美部落狼人' : genre === 'female-slap' ? '大女主打脸爽文' : '都市爽文';
+
+  const system = `你是一位专业的网文封面设计提示词工程师，擅长为 AI 绘图模型（DALL-E 3 / Midjourney）生成高转化率的竖版小说封面英文提示词。`;
+
+  const user = `
+--- 以下是本书的完整大纲 ---
+${outline}
+
+书籍类型：${genreLabel}
+
+请基于大纲核心人物形象、情绪基调与高潮冲突场景，生成一段用于 AI 绘图的英文提示词。要求：
+- 竖版构图，比例 7:10，适合裁剪为 700×1000
+- 体现女主强势气场与核心矛盾张力
+- 包含书名占位指引（如：book title text at top in stylized Chinese font）
+- 风格：high quality web novel cover, cinematic lighting, dramatic atmosphere
+
+只输出英文提示词本身，不要任何解释或前置说明。
 `;
 
   return { system, user };

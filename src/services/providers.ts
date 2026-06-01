@@ -20,7 +20,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     apiStyle: 'openai-compatible',
     defaultBaseUrl: 'https://api.openai.com/v1',
     defaultModel: 'gpt-4o',
-    modelSuggestions: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini'],
+    modelSuggestions: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-5', 'o3', 'o4-mini'],
     description: '适合稳定输出、大纲规划、简介和封面提示词。',
     helpText: 'OpenAI 使用标准 /chat/completions 接口。浏览器直连可能受网络或 CORS 影响，可通过代理转发。',
     directBrowserSupport: 'proxy-recommended',
@@ -43,8 +43,8 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     shortName: 'Gemini',
     apiStyle: 'gemini-generate-content',
     defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    defaultModel: 'gemini-1.5-pro',
-    modelSuggestions: ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.0-flash'],
+    defaultModel: 'gemini-2.5-flash-preview-05-20',
+    modelSuggestions: ['gemini-2.5-flash-preview-05-20', 'gemini-2.5-pro-preview-06-05', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
     description: '适合大纲结构、资料整理和多轮内容扩写。',
     helpText: 'Gemini 默认走官方 generateContent/streamGenerateContent 接口，API key 会作为请求参数发送。',
     directBrowserSupport: 'supported',
@@ -133,7 +133,7 @@ export function createConfigForProvider(providerId: LLMProviderId, current?: Par
     baseUrl: preset.defaultBaseUrl,
     model: preset.defaultModel,
     temperature: current?.temperature ?? 0.7,
-    maxTokens: current?.maxTokens ?? 4000,
+    maxTokens: current?.maxTokens ?? 8000,
     extraHeaders: current?.extraHeaders ?? {},
   };
 }

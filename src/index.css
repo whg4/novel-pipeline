@@ -4,18 +4,22 @@
 
 @layer base {
   body {
-    @apply bg-slate-900 text-slate-100 antialiased;
+    @apply bg-paper text-ink antialiased;
   }
 }
 
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
-  @apply bg-slate-800;
+  background: #ede8e3;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-700 rounded hover:bg-slate-600;
+  background: #c2b9b3;
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #9a8f87;
 }

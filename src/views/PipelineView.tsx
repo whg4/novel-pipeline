@@ -1,16 +1,66 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { Chapter } from '../types';
-import { runLLMStream, compileOutlinePrompt, compileChapterPrompt, compileBlurbPrompt } from '../services/llm';
+import {
+  runLLMStream, compileOutlinePrompt, compileChapterPrompt, compileBlurbPrompt,
+  compileLogicReviewPrompt, compileTitlePrompt, compileCoverPrompt
+} from '../services/llm';
 import { 
   Sparkles, BookOpen, Layers, Edit3, 
   CheckSquare, Plus, Save, Copy, 
-  AlertTriangle, RefreshCw 
+  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon
 } from 'lucide-react';
 
 interface PipelineViewProps {
   projectId: number;
+}
+
+// 从大纲文本解析章节（格式：### 第 X 章：标题 或 ### 第X章:标题）
+function parseOutlineChapters(
+  outline: string
+): { chapterNumber: number; title: string; outlineSection: string }[] {
+  const pattern = /###\s*第\s*(\d+)\s*章[：:]\s*([^\n]+)/g;
+  const positions: { num: number; title: string; start: number }[] = [];
+  let match;
+  while ((match = pattern.exec(outline)) !== null) {
+    positions.push({ num: parseInt(match[1], 10), title: match[2].trim(), start: match.index });
+  }
+  return positions.map((pos, i) => {
+    const end = i + 1 < positions.length ? positions[i + 1].start : outline.length;
+    return {
+      chapterNumber: pos.num,
+      title: pos.title,
+      outlineSection: outline.slice(pos.start, end).trim(),
+    };
+  });
+}
+
+// 将解析结果写入数据库（已存在的章节不覆盖正文内容）
+async function syncOutlineChaptersToDb(outline: string, projectId: number): Promise<number> {
+  const parsed = parseOutlineChapters(outline);
+  if (parsed.length === 0) return 0;
+  for (const p of parsed) {
+    const existing = await db.chapters
+      .where('projectId').equals(projectId)
+      .and(c => c.chapterNumber === p.chapterNumber)
+      .first();
+    if (!existing) {
+      await db.chapters.add({
+        projectId,
+        chapterNumber: p.chapterNumber,
+        title: `第 ${p.chapterNumber} 章：${p.title}`,
+        outlineSection: p.outlineSection,
+        content: '',
+        isCompleted: false,
+        versionHistory: [],
+        lastEdited: Date.now(),
+      });
+    } else if (!existing.outlineSection || existing.outlineSection.length < 20) {
+      await db.chapters.update(existing.id!, { outlineSection: p.outlineSection });
+    }
+  }
+  return parsed.length;
 }
 
 export default function PipelineView({ projectId }: PipelineViewProps) {
@@ -94,11 +144,26 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setGreaseWarnings(foundWarnings);
   }, [editingDraft]);
 
+  // ----------------------------------------------------
+  // ENGINE 3: MARKETING SHORTS STATE
+  // ----------------------------------------------------
+  const [blurbsOutput, setBlurbsOutput] = useState('');
+  const [coverPrompt, setCoverPrompt] = useState('');
+  const [titleOutput, setTitleOutput] = useState('');
+
+  // 自动流水线状态
+  const [isAutoRunning, setIsAutoRunning] = useState(false);
+  const [autoProgress, setAutoProgress] = useState<{ step: string; current: number; total: number } | null>(null);
+  const autoPauseRef = useRef(false);
+
+  // 章节逻辑审查输出
+  const [logicReviewOutput, setLogicReviewOutput] = useState('');
+
   if (!project) {
     return (
-      <div className="flex items-center justify-center p-12 text-slate-400">
-        <Sparkles size={36} className="animate-spin text-slate-600 mb-2" />
-        <p className="text-sm">Fetching active book dimensions...</p>
+      <div className="flex items-center justify-center p-12 text-ink-400">
+        <Sparkles size={36} className="animate-spin text-ink-300 mb-2" />
+        <p className="text-sm">加载项目中...</p>
       </div>
     );
   }
@@ -120,16 +185,18 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       );
 
       let accumulated = '';
-      await runLLMStream(compiled.system, compiled.user, (tok) => {
+      await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
         accumulated += tok;
         setGenerationOutput(accumulated);
       });
 
       // Update in database
       await db.projects.update(projectId, { outline: accumulated });
+      // 自动解析并同步章节结构
+      await syncOutlineChaptersToDb(accumulated, projectId);
       setIsGenerating(false);
     } catch (e: any) {
-      alert(`Generation Failed: ${e.message}`);
+      alert(`大纲生成失败：${e.message}`);
       setIsGenerating(false);
     }
   };
@@ -163,7 +230,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     const newCh: Chapter = {
       projectId,
       chapterNumber: nextNum,
-      title: `Chapter ${nextNum}`,
+      title: `第 ${nextNum} 章`,
       outlineSection: '',
       content: '',
       isCompleted: false,
@@ -173,7 +240,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
     const newId = await db.chapters.add(newCh);
     setActiveChapterId(Number(newId));
-    setEditingTitle(`Chapter ${nextNum}`);
+    setEditingTitle(`第 ${nextNum} 章`);
     setEditingOutline('');
     setEditingContent('');
   };
@@ -196,7 +263,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       versionHistory: updatedHistory.slice(-5), // Keep last 5 versions
       lastEdited: Date.now()
     });
-    alert('Draft saved locally.');
+    alert('草稿已保存。');
   };
 
   const handleGenerateChapterStream = async () => {
@@ -222,7 +289,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       );
 
       let accumulated = '';
-      await runLLMStream(compiled.system, compiled.user, (tok) => {
+      await runLLMStream('chapter', compiled.system, compiled.user, (tok) => {
         accumulated += tok;
         setEditingContent(accumulated);
       });
@@ -235,7 +302,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
       setIsGenerating(false);
     } catch (e: any) {
-      alert(`Draft generation stream error: ${e.message}`);
+      alert(`正文生成失败：${e.message}`);
       setIsGenerating(false);
     }
   };
@@ -243,39 +310,40 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // ----------------------------------------------------
   // ENGINE 3: MARKETING SHORTS
   // ----------------------------------------------------
-  const [blurbsOutput, setBlurbsOutput] = useState('');
-  const [coverPrompt, setCoverPrompt] = useState('');
-
   const handleGenerateMarketingKit = async () => {
     setIsGenerating(true);
     setBlurbsOutput('');
+    setTitleOutput('');
+    setCoverPrompt('');
     const blurbTemplate = skills.find(s => s.key === 'blurb')?.content || '';
     const sampleText = chapters.slice(0, 3).map(c => c.content).join('\n\n');
 
     try {
-      const compiled = compileBlurbPrompt(
-        project.outline,
-        sampleText,
-        blurbTemplate
-      );
-
-      let accumulated = '';
-      await runLLMStream(compiled.system, compiled.user, (tok) => {
-        accumulated += tok;
-        setBlurbsOutput(accumulated);
+      // 1. 生成简介
+      const blurbCompiled = compileBlurbPrompt(project.outline, sampleText, blurbTemplate);
+      let blurbAcc = '';
+      await runLLMStream('marketing', blurbCompiled.system, blurbCompiled.user, tok => {
+        blurbAcc += tok;
+        setBlurbsOutput(blurbAcc);
       });
 
-      // Also auto-concoct standard covers prompts
-      const coverIdea = `Vertical dynamic comic cover, book titled "${project.title}", showcasing ${
-        project.genre === 'classic-wolf' 
-          ? 'a majestic返祖 pure-blood giant werewolf with silver furs running under the moonlight beside a strong tribe leader, natural elements landscape' 
-          : 'an elegant elite corporate woman looking down with cold, calculating eyes, while a defeated antagonist sits clothes torn and ruined in backlights'
-      }, cinematic high fantasy web novel cover design, aspect ratio 7:10.`;
-      
-      setCoverPrompt(coverIdea);
+      // 2. 生成书名候选
+      const titleCompiled = compileTitlePrompt(project.outline);
+      let titleAcc = '';
+      await runLLMStream('marketing', titleCompiled.system, titleCompiled.user, tok => { titleAcc += tok; });
+      await db.projects.update(projectId, { titleCandidates: titleAcc });
+      setTitleOutput(titleAcc);
+
+      // 3. 生成封面提示词
+      const coverCompiled = compileCoverPrompt(project.outline, project.genre);
+      let coverAcc = '';
+      await runLLMStream('marketing', coverCompiled.system, coverCompiled.user, tok => { coverAcc += tok; });
+      await db.projects.update(projectId, { coverPrompt: coverAcc });
+      setCoverPrompt(coverAcc);
+
       setIsGenerating(false);
     } catch (e: any) {
-      alert(`Marketing kit compiler failed: ${e.message}`);
+      alert(`推广素材生成失败：${e.message}`);
       setIsGenerating(false);
     }
   };
@@ -287,46 +355,241 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     const cleanDraft = splitIndex !== -1 ? txt.substring(0, splitIndex).trim() : txt;
 
     navigator.clipboard.writeText(cleanDraft);
-    alert('Clean narrative copied to clipboard (all AI logic reviews excluded!).');
+    alert('正文已复制到剪贴板（审查内容已排除）。');
+  };
+
+  // 单章 AI 逻辑审查
+  const handleLogicReviewChapter = async (ch: Chapter) => {
+    if (!ch.content || ch.content.length < 50) {
+      alert('该章节还没有正文，无法进行逻辑审查。');
+      return;
+    }
+    setIsGenerating(true);
+    setLogicReviewOutput('');
+    const logicSkill = skills.find(s => s.key === 'logic_check')?.content || '';
+    try {
+      const compiled = compileLogicReviewPrompt(ch.content, ch.chapterNumber, logicSkill);
+      let acc = '';
+      await runLLMStream('review', compiled.system, compiled.user, tok => {
+        acc += tok;
+        setLogicReviewOutput(acc);
+      });
+      await db.chapters.update(ch.id!, { logicCheckLog: acc });
+    } catch (e: any) {
+      alert(`逻辑审查失败：${e.message}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // 一键全自动流水线
+  const handleRunAutoPipeline = async () => {
+    if (!project || isGenerating || isAutoRunning) return;
+    setIsAutoRunning(true);
+    setIsGenerating(true);
+    autoPauseRef.current = false;
+
+    const checkPause = () => {
+      if (autoPauseRef.current) throw new Error('__PAUSED__');
+    };
+
+    try {
+      const logicSkill = skills.find(s => s.key === 'logic_check')?.content || '';
+      const blurbSkill = skills.find(s => s.key === 'blurb')?.content || '';
+      const outlineTemplate = skills.find(s => s.key === 'outline_template')?.content || '';
+
+      // Step 1: 生成大纲（若已有则跳过）
+      let currentOutline = project.outline;
+      if (!currentOutline || currentOutline.length < 50) {
+        setAutoProgress({ step: '生成大纲', current: 1, total: 7 });
+        const compiled = compileOutlinePrompt(project.rawExample, project.background, project.characters, outlineTemplate);
+        let acc = '';
+        await runLLMStream('outline', compiled.system, compiled.user, tok => {
+          acc += tok;
+          setGenerationOutput(acc);
+        });
+        await db.projects.update(projectId, { outline: acc });
+        currentOutline = acc;
+        checkPause();
+      }
+
+      // Step 2: 解析并同步章节结构
+      setAutoProgress({ step: '解析章节结构', current: 2, total: 7 });
+      const parsedCount = await syncOutlineChaptersToDb(currentOutline, projectId);
+      if (parsedCount === 0) {
+        throw new Error('未能从大纲中解析出章节（请确认大纲包含“### 第 X 章：标题”格式）');
+      }
+      checkPause();
+
+      // Step 3-N: 逐章生成正文 + 逻辑审查
+      const allChapters = await db.chapters
+        .where('projectId').equals(projectId)
+        .sortBy('chapterNumber');
+
+      const totalSteps = 2 + allChapters.length * 2 + 2;
+
+      for (let i = 0; i < allChapters.length; i++) {
+        const ch = allChapters[i];
+        const prevChs = allChapters.slice(0, i);
+
+        setAutoProgress({ step: `生成第 ${ch.chapterNumber} 章正文`, current: 2 + i * 2 + 1, total: totalSteps });
+        if (!ch.content || ch.content.length < 100) {
+          const chComp = compileChapterPrompt(
+            currentOutline, ch.chapterNumber, ch.outlineSection, prevChs,
+            skills, project.genre === 'classic-wolf', project.genre === 'female-slap'
+          );
+          let draftAcc = '';
+          await runLLMStream('chapter', chComp.system, chComp.user, tok => { draftAcc += tok; });
+          await db.chapters.update(ch.id!, { content: draftAcc, lastEdited: Date.now() });
+          allChapters[i] = { ...ch, content: draftAcc };
+          if (activeChapterId === ch.id) setEditingContent(draftAcc);
+        }
+        checkPause();
+
+        setAutoProgress({ step: `审查第 ${ch.chapterNumber} 章逻辑`, current: 2 + i * 2 + 2, total: totalSteps });
+        const content = allChapters[i].content;
+        if (content && logicSkill) {
+          const reviewComp = compileLogicReviewPrompt(content, ch.chapterNumber, logicSkill);
+          let reviewAcc = '';
+          await runLLMStream('review', reviewComp.system, reviewComp.user, tok => { reviewAcc += tok; });
+          await db.chapters.update(ch.id!, { logicCheckLog: reviewAcc });
+          if (activeChapterId === ch.id) setLogicReviewOutput(reviewAcc);
+        }
+        checkPause();
+      }
+
+      // 生成简介
+      setAutoProgress({ step: '生成爆款简介', current: totalSteps - 1, total: totalSteps });
+      const latestChapters = await db.chapters.where('projectId').equals(projectId).sortBy('chapterNumber');
+      const sampleText = latestChapters.slice(0, 3).map(c => c.content).join('\n\n');
+      const blurbComp = compileBlurbPrompt(currentOutline, sampleText, blurbSkill);
+      let blurbAcc = '';
+      await runLLMStream('marketing', blurbComp.system, blurbComp.user, tok => { blurbAcc += tok; setBlurbsOutput(blurbAcc); });
+      checkPause();
+
+      // 生成书名与封面
+      setAutoProgress({ step: '生成书名与封面提示词', current: totalSteps, total: totalSteps });
+      const titleComp = compileTitlePrompt(currentOutline);
+      let titleAcc = '';
+      await runLLMStream('marketing', titleComp.system, titleComp.user, tok => { titleAcc += tok; });
+      await db.projects.update(projectId, { titleCandidates: titleAcc });
+      setTitleOutput(titleAcc);
+
+      const coverComp = compileCoverPrompt(currentOutline, project.genre);
+      let coverAcc = '';
+      await runLLMStream('marketing', coverComp.system, coverComp.user, tok => { coverAcc += tok; });
+      await db.projects.update(projectId, { coverPrompt: coverAcc });
+      setCoverPrompt(coverAcc);
+
+      setAutoProgress({ step: '全部完成 ✓', current: totalSteps, total: totalSteps });
+    } catch (e: any) {
+      if (e.message === '__PAUSED__') {
+        setAutoProgress(prev => prev ? { ...prev, step: '已暂停（点击继续）' } : null);
+      } else {
+        alert(`自动流水线执行出错：${e.message}`);
+        setAutoProgress(null);
+      }
+    } finally {
+      setIsAutoRunning(false);
+      setIsGenerating(false);
+    }
   };
 
   return (
     <div className="space-y-6">
-      {/* Title Header details */}
-      <div className="bg-slate-900 border border-slate-800 p-4 rounded-xl flex items-center justify-between">
+      {/* 项目标题与导航 */}
+      <div className="border-b-2 border-ink pb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Active Project Space</div>
-          <h1 className="text-lg font-bold text-indigo-300 mt-0.5">{project.title}</h1>
+          <div className="text-[10px] font-bold text-ink-400 uppercase tracking-widest">当前项目</div>
+          <h1 className="text-xl font-black font-display text-ink mt-0.5">{project.title}</h1>
         </div>
 
-        {/* Tab Selector buttons */}
-        <div className="flex bg-slate-950 p-1.5 rounded-lg border border-slate-800">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* 一键全自动按鈕 */}
           <button
-            onClick={() => setPipelineTab('outline')}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition ${
-              pipelineTab === 'outline' ? 'bg-indigo-600 font-bold text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
+            onClick={handleRunAutoPipeline}
+            disabled={isGenerating || isAutoRunning}
+            className="flex items-center gap-1.5 bg-grove hover:bg-grove-muted disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 transition"
           >
-            <Layers size={13} /> Stage 1: Outline
+            <Play size={12} className={isAutoRunning ? 'animate-pulse' : ''} />
+            {isAutoRunning ? '运行中...' : '一键全自动'}
           </button>
-          <button
-            onClick={() => setPipelineTab('drafting')}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition ${
-              pipelineTab === 'drafting' ? 'bg-indigo-600 font-bold text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Edit3 size={13} /> Stage 2: Drafting Room
-          </button>
-          <button
-            onClick={() => setPipelineTab('marketing')}
-            className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold rounded-md transition ${
-              pipelineTab === 'marketing' ? 'bg-indigo-600 font-bold text-white' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            <Sparkles size={13} /> Stage 3: Marketing Kit
-          </button>
+
+          {/* 标签切换 */}
+          <div className="flex border-b border-rule">
+            <button
+              onClick={() => setPipelineTab('outline')}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border-b-2 transition -mb-px ${
+                pipelineTab === 'outline' ? 'border-accent text-accent' : 'border-transparent text-ink-500 hover:text-ink'
+              }`}
+            >
+              <Layers size={13} /> 第一阶段：大纲
+            </button>
+            <button
+              onClick={() => setPipelineTab('drafting')}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border-b-2 transition -mb-px ${
+                pipelineTab === 'drafting' ? 'border-accent text-accent' : 'border-transparent text-ink-500 hover:text-ink'
+              }`}
+            >
+              <Edit3 size={13} /> 第二阶段：写作间
+            </button>
+            <button
+              onClick={() => setPipelineTab('marketing')}
+              className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border-b-2 transition -mb-px ${
+                pipelineTab === 'marketing' ? 'border-accent text-accent' : 'border-transparent text-ink-500 hover:text-ink'
+              }`}
+            >
+              <Sparkles size={13} /> 第三阶段：推广
+            </button>
+          </div>
         </div>
       </div>
+
+      {/* 自动流水线进度条 */}
+      {(isAutoRunning || autoProgress) && (
+        <div className="bg-accent-faint border border-accent/30 p-4 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 flex-1 min-w-0">
+            {isAutoRunning && <RefreshCw size={16} className="animate-spin text-accent shrink-0" />}
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-accent truncate">{autoProgress?.step || '准备中...'}</div>
+              {autoProgress && (
+                <div className="text-[10px] text-ink-400 mt-0.5">步骤 {autoProgress.current} / {autoProgress.total}</div>
+              )}
+            </div>
+            {autoProgress && (
+              <div className="flex-1 h-1.5 bg-rule rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-accent rounded-full transition-all duration-500"
+                  style={{ width: `${Math.min(100, (autoProgress.current / autoProgress.total) * 100)}%` }}
+                />
+              </div>
+            )}
+          </div>
+          {isAutoRunning ? (
+            <button
+              onClick={() => { autoPauseRef.current = true; }}
+              className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 transition shrink-0"
+            >
+              <Pause size={12} /> 暂停
+            </button>
+          ) : autoProgress?.step !== '全部完成 ✓' && autoProgress && (
+            <button
+              onClick={() => { autoPauseRef.current = false; handleRunAutoPipeline(); }}
+              className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover text-white text-xs font-bold px-3 py-1.5 transition shrink-0"
+            >
+              <Play size={12} /> 继续
+            </button>
+          )}
+          {autoProgress?.step === '全部完成 ✓' && (
+            <button
+              onClick={() => setAutoProgress(null)}
+              className="text-xs text-ink-400 hover:text-ink font-semibold px-3 py-1.5 shrink-0"
+            >
+              关闭
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ---------------------------------------------------- */}
       {/* STAGE 1: OUTLINE STUDIO */}
@@ -334,34 +597,46 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       {pipelineTab === 'outline' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
-            <div className="bg-slate-900/40 border border-slate-700/30 rounded-xl p-5 space-y-4 shadow flex flex-col justify-between min-h-[500px]">
+            <div className="bg-paper-50 border border-rule p-5 space-y-4 flex flex-col justify-between min-h-[500px]">
               <div className="space-y-3">
-                <div className="flex justify-between items-center pb-2 border-b border-sidebar border-slate-800">
-                  <h3 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
-                    <Layers size={15} className="text-indigo-400" /> Compiled Book Outline
+                <div className="flex justify-between items-center pb-2 border-b border-rule">
+                  <h3 className="text-sm font-bold text-ink flex items-center gap-1.5">
+                    <Layers size={15} className="text-accent" /> 大纲编辑
                   </h3>
-                  <button
-                    disabled={isGenerating}
-                    onClick={handleGenerateOutline}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition"
-                  >
-                    <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
-                    {project.outline ? 'Recompile Outline' : 'Generate Full Outline'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      disabled={isGenerating}
+                      onClick={async () => {
+                        const n = await syncOutlineChaptersToDb(project.outline, projectId);
+                        alert(n > 0 ? `已同步 ${n} 个章节到数据库。` : '未在大纲中找到章节（请确认包含“### 第 X 章：”格式）。');
+                      }}
+                      className="bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
+                    >
+                      <BookOpen size={12} /> 同步章节
+                    </button>
+                    <button
+                      disabled={isGenerating}
+                      onClick={handleGenerateOutline}
+                      className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 flex items-center gap-1.5 transition"
+                    >
+                      <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
+                      {project.outline ? '重新生成' : '生成大纲'}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex-1">
                   {isGenerating && !generationOutput ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-slate-500 space-y-2">
-                      <RefreshCw size={24} className="animate-spin text-slate-600" />
-                      <p className="text-xs">Invoking creative model pipeline...</p>
+                    <div className="flex flex-col items-center justify-center py-20 text-ink-400 space-y-2">
+                      <RefreshCw size={24} className="animate-spin text-ink-300" />
+                      <p className="text-xs">正在调用模型生成大纲...</p>
                     </div>
                   ) : (
                     <textarea
                       value={isGenerating ? generationOutput : project.outline}
                       onChange={(e) => handleUpdateOutlineManual(e.target.value)}
-                      className="w-full h-[400px] bg-slate-950/70 border border-slate-800 rounded-xl p-4 font-mono text-slate-300 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none leading-relaxed resize-none"
-                      placeholder="Your generated book outline will compile here. Give Background, characters, and press Generate outline..."
+                      className="w-full h-[400px] bg-paper border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                      placeholder="大纲将在此生成。填写背景、人物设定与参考模板后，点击「生成大纲」..."
                     />
                   )}
                 </div>
@@ -369,8 +644,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
               {project.outline && (
                 <div className="flex justify-end pt-2">
-                  <span className="text-[10px] text-slate-500 bg-slate-900/60 border border-slate-800/80 px-2 py-1 rounded inline-block font-semibold">
-                    ✓ Outline compiled and stored. You can edit individual lines directly.
+                  <span className="text-[10px] text-ink-400 bg-paper-100 border border-rule px-2 py-1 inline-block font-semibold">
+                    ✓ 大纲已生成并保存，可直接编辑。
                   </span>
                 </div>
               )}
@@ -379,12 +654,12 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
           {/* Checklist: 仿写大纲自检清单 */}
           <div className="space-y-4">
-            <div className="bg-slate-905 border border-slate-800 bg-slate-900/40 p-4 rounded-xl space-y-4">
-              <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
-                <CheckSquare size={13} /> 仿写大纲自检清单 (Rules Check)
+            <div className="bg-paper-50 border border-rule p-4 space-y-4">
+              <h3 className="text-xs font-bold text-accent uppercase tracking-widest flex items-center gap-1.5">
+                <CheckSquare size={13} /> 仿写大纲自检清单
               </h3>
-              <p className="text-[10px] text-slate-400 leading-normal">
-                Based on your loaded <strong>仿写大纲输出格式模板 v3.0</strong> guidelines, verify each segment of your compile before you build chapter drafts:
+              <p className="text-[10px] text-ink-400 leading-normal">
+                按照《仿写大纲输出格式模板 v3.0》规则，逐项验证大纲内容：
               </p>
 
               <div className="space-y-2.5">
@@ -402,16 +677,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 ].map((item) => (
                   <label
                     key={item.key}
-                    className="flex items-center gap-3 bg-slate-950/20 border border-slate-805 hover:border-slate-700/40 p-2.5 rounded-lg cursor-pointer transition"
+                    className="flex items-center gap-3 bg-paper border border-rule hover:border-rule-dark p-2.5 cursor-pointer transition"
                   >
                     <input
                       type="checkbox"
                       checked={outlineChecklist[item.key]}
                       onChange={(e) => setOutlineChecklist({ ...outlineChecklist, [item.key]: e.target.checked })}
-                      className="rounded accent-indigo-500 shrink-0 cursor-pointer"
+                      className="rounded accent-[#9b2d20] shrink-0 cursor-pointer"
                     />
                     <span className={`text-[11px] font-medium leading-tight ${
-                      outlineChecklist[item.key] ? 'text-slate-400 line-through' : 'text-slate-300'
+                      outlineChecklist[item.key] ? 'text-ink-400 line-through' : 'text-ink'
                     }`}>
                       {item.title}
                     </span>
@@ -429,16 +704,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       {pipelineTab === 'drafting' && (
         <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
           {/* Chapter Outline selector column */}
-          <div className="xl:col-span-1 border border-slate-800 bg-slate-900/40 rounded-xl p-4 flex flex-col justify-between h-[calc(100vh-240px)] overflow-y-auto space-y-4">
+          <div className="xl:col-span-1 border border-rule bg-paper-50 p-4 flex flex-col justify-between h-[calc(100vh-240px)] overflow-y-auto space-y-4">
             <div className="space-y-4">
               <div className="flex justify-between items-center">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1">
-                  <BookOpen size={12} className="text-indigo-400" /> Chapter drafts Index
+                <h3 className="text-xs font-bold text-ink-400 uppercase tracking-widest flex items-center gap-1">
+                  <BookOpen size={12} className="text-accent" /> 章节列表
                 </h3>
                 <button
                   onClick={handleCreateNewChapter}
-                  className="p-1 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 rounded transition border border-slate-800/80"
-                  title="Add new chapter draft"
+                  className="p-1 hover:bg-accent-faint text-accent hover:text-accent-hover rounded transition border border-rule"
+                  title="新建章节"
                 >
                   <Plus size={14} />
                 </button>
@@ -449,19 +724,19 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   <button
                     key={ch.id}
                     onClick={() => handleSelectChapter(ch)}
-                    className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold border flex items-center justify-between transition ${
+                    className={`w-full text-left px-3 py-2 text-xs font-semibold border-l-2 flex items-center justify-between transition ${
                       activeChapterId === ch.id
-                        ? 'bg-indigo-600/10 border-indigo-500/40 text-indigo-300 font-bold'
-                        : 'bg-transparent border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                        ? 'border-accent text-accent bg-accent-faint font-bold'
+                        : 'border-transparent text-ink-500 hover:bg-paper-100 hover:text-ink'
                     }`}
                   >
                     <span>第 {ch.chapterNumber} 章: {ch.title.split(':').pop()?.trim()}</span>
                     {ch.content ? (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-900 font-bold border border-slate-800 text-emerald-400">
+                      <span className="text-[9px] px-1.5 py-0.5 bg-grove-light font-bold border border-grove/30 text-grove">
                         {ch.content.length} words
                       </span>
                     ) : (
-                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-900 font-bold text-slate-500 border border-slate-800">
+                      <span className="text-[9px] px-1.5 py-0.5 bg-paper-100 font-bold text-ink-400 border border-rule">
                         empty
                       </span>
                     )}
@@ -471,14 +746,14 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             </div>
 
             {chapters.length === 0 && (
-              <div className="text-center py-6 text-slate-500 space-y-2 border border-slate-800 border-dashed rounded-lg bg-slate-950/20">
-                <p className="text-[10px]">No chapters built yet.</p>
+              <div className="text-center py-6 text-ink-400 space-y-2 border border-rule border-dashed bg-paper">
+                <p className="text-[10px]">还没有章节。</p>
                 <button
                   type="button"
                   onClick={handleCreateNewChapter}
-                  className="text-[10px] font-semibold text-indigo-400 hover:text-indigo-300 underline"
+                  className="text-[10px] font-semibold text-accent hover:text-accent-hover underline"
                 >
-                  + Add First Chapter
+                  添加第一章
                 </button>
               </div>
             )}
@@ -487,39 +762,52 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           {/* Core Text Editor Grid */}
           <div className="xl:col-span-2 space-y-4">
             {activeChapterId !== null ? (
-              <div className="bg-slate-900/40 border border-slate-700/30 rounded-xl p-5 flex flex-col justify-between min-h-[500px] h-[calc(100vh-240px)] shadow">
+              <div className="bg-paper-50 border border-rule p-5 flex flex-col justify-between min-h-[500px] h-[calc(100vh-240px)]">
                 <div className="flex flex-col h-full space-y-4">
                   {/* Top toolbar */}
-                  <div className="flex flex-col sm:flex-row gap-3 justify-between sm:items-center border-b border-slate-800 pb-3">
+                  <div className="flex flex-col sm:flex-row gap-3 justify-between sm:items-center border-b border-rule pb-3">
                     <div className="flex items-center gap-2 flex-grow max-w-sm">
-                      <span className="text-[10px] font-mono bg-indigo-950/50 text-indigo-400 px-2 py-1 rounded border border-indigo-900/50 shrink-0">
-                        Ch {chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1}
+                      <span className="text-[10px] font-mono bg-accent-faint text-accent px-2 py-1 border border-accent/20 shrink-0">
+                        第 {chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1} 章
                       </span>
                       <input
                         type="text"
                         value={editingTitle}
                         onChange={(e) => setEditingTitle(e.target.value)}
-                        className="bg-transparent border-b border-transparent hover:border-slate-800 focus:border-indigo-500 focus:outline-none text-sm font-bold text-slate-200 w-full py-0.5"
-                        placeholder="Chapter Title Name"
+                        className="bg-transparent border-b border-transparent hover:border-rule focus:border-accent focus:outline-none text-sm font-bold text-ink w-full py-0.5"
+                        placeholder="章节标题"
                       />
                     </div>
 
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         onClick={handleSaveChapterManual}
-                        className="p-1 px-2 hover:bg-slate-800 text-slate-300 rounded border border-slate-800 text-xs font-semibold flex items-center gap-1 transition animate-pulse"
-                        title="Save Draft locally"
+                        className="p-1 px-2 hover:bg-paper-100 text-ink-500 border border-rule text-xs font-semibold flex items-center gap-1 transition"
+                        title="保存草稿"
                       >
-                        <Save size={12} /> Save Draft
+                        <Save size={12} /> 保存草稿
+                      </button>
+
+                      <button
+                        disabled={isGenerating}
+                        onClick={() => {
+                          const ch = chapters.find(c => c.id === activeChapterId);
+                          if (ch) handleLogicReviewChapter(ch);
+                        }}
+                        className="hover:bg-paper-100 disabled:opacity-50 text-grove border border-rule text-xs px-2.5 py-1.5 flex items-center gap-1.5 transition font-bold"
+                        title="AI 逻辑审查"
+                      >
+                        <FileSearch size={12} className={isGenerating ? 'animate-spin' : ''} />
+                        逻辑审查
                       </button>
 
                       <button
                         disabled={isGenerating}
                         onClick={handleGenerateChapterStream}
-                        className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition font-bold"
+                        className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs px-3.5 py-1.5 flex items-center gap-1.5 transition font-bold"
                       >
                         <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
-                        Draft Chapter Stream
+                        生成正文
                       </button>
                     </div>
                   </div>
@@ -527,16 +815,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   {/* Dual Grid: Local Chapter Outline Requirements & Main Story Content */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 h-[80%]">
                     {/* Tiny Outline box for current single chapter */}
-                    <div className="md:col-span-1 bg-slate-950/40 p-2.5 rounded-lg border border-slate-800/80 flex flex-col justify-between space-y-2 h-full">
+                    <div className="md:col-span-1 bg-paper-50 p-2.5 border border-rule flex flex-col justify-between space-y-2 h-full">
                       <div className="space-y-1 h-[100%] flex flex-col">
-                        <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                          Current Chapter Outline Requirements
+                        <label className="text-[10px] font-bold text-ink-400 uppercase tracking-wider">
+                          本章大纲要求
                         </label>
                         <textarea
                           value={editingOutline}
                           onChange={(e) => setEditingOutline(e.target.value)}
-                          className="w-full flex-1 bg-slate-900/30 border border-slate-800/80 rounded-lg p-2.5 font-sans text-[11px] text-slate-300 focus:outline-none focus:border-slate-700/60 leading-relaxed resize-none h-[100%]"
-                          placeholder="Paste outline directives for this specific chapter. (e.g. Heroine walks into tribal arena, confronts Kael, refuses engagement pledge, triggers Kael anger block...)"
+                          className="w-full flex-1 bg-paper-50 border border-rule p-2.5 font-sans text-[11px] text-ink focus:outline-none focus:border-rule-dark leading-relaxed resize-none h-[100%]"
+                          placeholder="将本章大纲片段粘贴在此（可从大纲编辑框复制）..."
                         />
                       </div>
                     </div>
@@ -547,40 +835,40 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                         {editingDraft && (
                           <button
                             onClick={() => handleCopyText(editingDraft)}
-                            className="p-1 px-2 bg-slate-950/80 backdrop-blur border border-slate-850 hover:bg-slate-900 text-[10px] text-slate-400 font-bold rounded flex items-center gap-1 transition"
+                            className="p-1 px-2 bg-paper-100 border border-rule hover:bg-paper text-[10px] text-ink-500 font-bold flex items-center gap-1 transition"
                             title="Copy clean narrative"
                           >
-                            <Copy size={11} /> Copy Clean Text
+                            <Copy size={11} /> 复制正文
                           </button>
                         )}
                       </div>
                       <textarea
                         value={isGenerating && !editingDraft ? generationOutput : editingDraft}
                         onChange={(e) => setEditingContent(e.target.value)}
-                        className="w-full flex-1 h-full bg-slate-950/80 border border-slate-800 rounded-xl p-4 pr-10 font-mono text-xs text-slate-200 focus:ring-1 focus:ring-indigo-500 focus:outline-none leading-relaxed resize-none"
-                        placeholder="Draft narrative flows here..."
+                        className="w-full flex-1 h-full bg-paper-50 border border-rule p-4 pr-10 font-mono text-xs text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                        placeholder="正文将在此生成..."
                       />
                     </div>
                   </div>
                 </div>
 
-                <div className="flex justify-between items-center text-[10px] text-slate-500 mt-2 border-t border-slate-800/40 pt-2 font-semibold">
+                <div className="flex justify-between items-center text-[10px] text-ink-400 mt-2 border-t border-rule pt-2 font-semibold">
                   <span className="flex items-center gap-1.5">
-                    Words: <strong className="font-mono text-slate-300">{editingDraft.length}</strong>
+                    字数：<strong className="font-mono text-ink">{editingDraft.length}</strong>
                   </span>
-                  <span>Version history preserves automatically upon subsequent runs.</span>
+                  <span>每次重新生成时自动保存版本历史（最多 5 版）。</span>
                 </div>
               </div>
             ) : (
-              <div className="bg-slate-900/40 border border-slate-800 border-dashed rounded-xl p-16 text-center space-y-3">
-                <Edit3 className="mx-auto text-slate-600" size={32} />
-                <h4 className="font-bold text-slate-300 text-sm">No Active Chapter Active</h4>
-                <p className="text-slate-500 text-xs max-w-xs mx-auto">Select a chapter from the indexes on the left list, or create a brand-new one to write.</p>
+              <div className="bg-paper border border-rule border-dashed p-16 text-center space-y-3">
+                <Edit3 className="mx-auto text-ink-300" size={32} />
+                <h4 className="font-bold text-ink text-sm">请选择章节</h4>
+                <p className="text-ink-400 text-xs max-w-xs mx-auto">从左侧列表选择一个章节，或新建章节开始写作。</p>
                 <button
                   onClick={handleCreateNewChapter}
-                  className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 font-semibold px-4 py-1.5 rounded-lg text-xs"
+                  className="border border-rule bg-paper hover:bg-paper-100 text-ink-500 font-semibold px-4 py-1.5 text-xs"
                 >
-                  Create New Chapter
+                  新建章节
                 </button>
               </div>
             )}
@@ -590,17 +878,17 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           <div className="xl:col-span-1 space-y-4">
             {/* 1. Client-Side Anti-Grease Warn Card */}
             {greaseWarnings.length > 0 && (
-              <div className="bg-rose-950/20 border border-rose-900/50 p-4 rounded-xl space-y-2">
-                <div className="flex items-center gap-2 text-rose-400">
+              <div className="bg-accent-pale border border-accent/40 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-accent">
                   <AlertTriangle size={15} />
-                  <h3 className="text-xs font-bold uppercase tracking-wider">Style grease alert (去油警告)</h3>
+                  <h3 className="text-xs font-bold uppercase tracking-wider">去油警告</h3>
                 </div>
-                <p className="text-[10px] text-rose-300/80 leading-normal">
-                  Found typical repetitive AI clichés in your draft. Consider revising these segments representing author explanation or local organ overacting:
+                <p className="text-[10px] text-accent/80 leading-normal">
+                  正文中检测到典型 AI 套路词句，请对照修改：
                 </p>
                 <ul className="space-y-1">
                   {greaseWarnings.map((warn, i) => (
-                    <li key={i} className="text-[10px] text-slate-300 font-bold flex items-start gap-1.5 before:content-['•'] before:text-rose-400" >
+                    <li key={i} className="text-[10px] text-ink font-bold flex items-start gap-1.5 before:content-['•'] before:text-accent" >
                       {warn}
                     </li>
                   ))}
@@ -608,13 +896,26 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               </div>
             )}
 
+            {/* AI 逻辑审查报告 */}
+            {(logicReviewOutput || chapters.find(c => c.id === activeChapterId)?.logicCheckLog) && (
+              <div className="bg-grove-light border border-grove/40 p-4 space-y-2">
+                <div className="flex items-center gap-2 text-grove">
+                  <FileSearch size={15} />
+                  <h3 className="text-xs font-bold uppercase tracking-wider">AI 逻辑审查报告</h3>
+                </div>
+                <pre className="text-[10px] text-ink-600 leading-relaxed whitespace-pre-wrap font-sans">
+                  {logicReviewOutput || chapters.find(c => c.id === activeChapterId)?.logicCheckLog}
+                </pre>
+              </div>
+            )}
+
             {/* 2. Interactive Logic Checklist */}
-            <div className="bg-slate-900/40 border border-slate-800 p-4 rounded-xl space-y-4">
-              <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-widest flex items-center gap-1.5">
-                <CheckSquare size={13} /> 逻辑自查 v3.2 Checklist
+            <div className="bg-paper-50 border border-rule p-4 space-y-4">
+              <h3 className="text-xs font-bold text-accent uppercase tracking-widest flex items-center gap-1.5">
+                <CheckSquare size={13} /> 逻辑自查 v3.2
               </h3>
-              <p className="text-[10px] text-slate-400 leading-normal">
-                Strictly verify time, position, and physical item constraints specified under <strong>小说正文逻辑审查流程 v3.2</strong> rules:
+              <p className="text-[10px] text-ink-400 leading-normal">
+                对照《小说正文逻辑审查流程 v3.2》检查当前章节，逐项打勾确认：
               </p>
 
               <div className="space-y-2">
@@ -629,16 +930,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 ].map((item) => (
                   <label
                     key={item.key}
-                    className="flex items-start gap-2.5 bg-slate-950/20 border border-slate-805 hover:border-slate-700/40 p-2.5 rounded-lg cursor-pointer transition"
+                    className="flex items-start gap-2.5 bg-paper border border-rule hover:border-rule-dark p-2.5 cursor-pointer transition"
                   >
                     <input
                       type="checkbox"
                       checked={draftChecklist[item.key]}
                       onChange={(e) => setDraftChecklist({ ...draftChecklist, [item.key]: e.target.checked })}
-                      className="rounded accent-indigo-500 shrink-0 mt-0.5 cursor-pointer"
+                      className="rounded accent-[#9b2d20] shrink-0 mt-0.5 cursor-pointer"
                     />
                     <span className={`text-[11px] leading-tight ${
-                      draftChecklist[item.key] ? 'text-slate-400 line-through' : 'text-slate-300'
+                      draftChecklist[item.key] ? 'text-ink-400 line-through' : 'text-ink'
                     }`}>
                       {item.label}
                     </span>
@@ -657,50 +958,50 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2 space-y-4">
             {/* Blurb Generation cards */}
-            <div className="bg-slate-900/40 border border-slate-700/30 rounded-xl p-5 space-y-4 shadow flex flex-col justify-between min-h-[460px]">
+            <div className="bg-paper-50 border border-rule p-5 space-y-4 flex flex-col justify-between min-h-[460px]">
               <div className="space-y-3">
-                <div className="flex justify-between items-center pb-2 border-b border-slate-800">
-                  <h3 className="text-sm font-bold text-slate-200 flex items-center gap-1.5">
-                    <Sparkles size={15} className="text-indigo-400" /> Viral Click-Catching Blurbs (简介/导语)
+                <div className="flex justify-between items-center pb-2 border-b border-rule">
+                  <h3 className="text-sm font-bold text-ink flex items-center gap-1.5">
+                    <Sparkles size={15} className="text-accent" /> 爆款简介（导语）
                   </h3>
                   <button
                     disabled={isGenerating}
                     onClick={handleGenerateMarketingKit}
-                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 rounded-lg flex items-center gap-1.5 transition"
+                    className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 flex items-center gap-1.5 transition"
                   >
                     <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
-                    Compile Marketing Shorts
+                    一键生成推广素材
                   </button>
                 </div>
 
                 <div className="flex-1">
                   {isGenerating && !blurbsOutput ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-slate-500 space-y-2">
-                      <RefreshCw size={24} className="animate-spin text-slate-600" />
-                      <p className="text-xs">Applying viral text heuristics rules...</p>
+                    <div className="flex flex-col items-center justify-center py-20 text-ink-400 space-y-2">
+                      <RefreshCw size={24} className="animate-spin text-ink-300" />
+                      <p className="text-xs">正在生成...</p>
                     </div>
                   ) : (
                     <textarea
                       readOnly
                       value={blurbsOutput}
-                      className="w-full h-[320px] bg-slate-950/70 border border-slate-800 rounded-xl p-4 font-mono text-slate-300 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none leading-relaxed resize-none"
-                      placeholder="Press compile button. The model will yield three variants of hyper-converting conflict snapshots following the two-act rule (Confrontation stage + Midnight down-on-knees segment)..."
+                      className="w-full h-[320px] bg-paper border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                      placeholder="点击“一键生成推广素材”后，此处将生成 3 个风格各异的爆款简介..."
                     />
                   )}
                 </div>
               </div>
 
               {blurbsOutput && (
-                <div className="flex justify-between items-center bg-slate-950/30 border border-slate-800/80 p-3 rounded-lg text-[10px] text-slate-400">
-                  <span>✓ Standard Blurbs outputted beautifully.</span>
+                <div className="flex justify-between items-center bg-paper-100 border border-rule p-3 text-[10px] text-ink-400">
+                  <span>✓ 简介已生成。</span>
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(blurbsOutput);
-                      alert('All blurb variations copied!');
+                      alert('已复制所有简介！');
                     }}
-                    className="text-indigo-400 hover:text-indigo-300 font-bold"
+                    className="text-accent hover:text-accent-hover font-bold"
                   >
-                    Copy All Outputs
+                    复制全部
                   </button>
                 </div>
               )}
@@ -708,13 +1009,58 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           </div>
 
           <div className="space-y-4">
-            {/* Prompt Cover design block */}
-            <div className="bg-slate-905 border border-slate-800 bg-slate-900/40 p-4 rounded-xl space-y-4 shadow-xl">
-              <h3 className="text-xs font-bold text-indigo-400 uppercase tracking-widest">
-                Cover Art Prompt Generator
+            {/* 书名候选 */}
+            <div className="bg-paper-50 border border-rule p-4 space-y-3">
+              <div className="flex justify-between items-center pb-2 border-b border-rule">
+                <h3 className="text-sm font-bold text-ink flex items-center gap-1.5">
+                  <Type size={14} className="text-accent" /> 书名候选
+                </h3>
+                <button
+                  disabled={isGenerating}
+                  onClick={async () => {
+                    setIsGenerating(true);
+                    setTitleOutput('');
+                    try {
+                      const comp = compileTitlePrompt(project.outline);
+                      let acc = '';
+                      await runLLMStream('marketing', comp.system, comp.user, tok => { acc += tok; setTitleOutput(acc); });
+                      await db.projects.update(projectId, { titleCandidates: acc });
+                    } catch (e: any) {
+                      alert(`书名生成失败：${e.message}`);
+                    } finally {
+                      setIsGenerating(false);
+                    }
+                  }}
+                  className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
+                >
+                  <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} /> 生成书名
+                </button>
+              </div>
+              {titleOutput ? (
+                <div className="space-y-2">
+                  <pre className="text-xs text-ink leading-relaxed whitespace-pre-wrap font-sans">{titleOutput}</pre>
+                  <button
+                    onClick={() => { navigator.clipboard.writeText(titleOutput); alert('书名候选已复制！'); }}
+                    className="text-xs text-accent hover:text-accent-hover font-semibold"
+                  >
+                    复制全部书名
+                  </button>
+                </div>
+              ) : (
+                <div className="text-center py-6 text-ink-300 border border-rule border-dashed">
+                  <Type size={20} className="mx-auto mb-2" />
+                  <span className="text-[10px] font-semibold block">点击“生成书名”，根据大纲生成 8 个备选书名。</span>
+                </div>
+              )}
+            </div>
+
+            {/* 封面提示词 */}
+            <div className="bg-paper-50 border border-rule p-4 space-y-4">
+              <h3 className="text-xs font-bold text-accent uppercase tracking-widest flex items-center gap-1.5">
+                <ImageIcon size={13} /> 封面提示词
               </h3>
-              <p className="text-[10px] text-slate-400 leading-normal">
-                Standard high-impact structured prompt optimized for DALL-E / GPT Image / Midjourney generating vertical novel cover jackets:
+              <p className="text-[10px] text-ink-400 leading-normal">
+                用于 DALL-E 3 / Midjourney 等 AI 绘图模型的竖版封面生成提示词：
               </p>
 
               {coverPrompt ? (
@@ -722,21 +1068,21 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   <textarea
                     readOnly
                     value={coverPrompt}
-                    className="w-full h-32 bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[10px] text-slate-300 resize-none focus:outline-none"
+                    className="w-full h-32 bg-paper border border-rule p-2.5 font-mono text-[10px] text-ink resize-none focus:outline-none"
                   />
                   <button
                     onClick={() => {
                       navigator.clipboard.writeText(coverPrompt);
                       alert('Cover prompt copied text!');
                     }}
-                    className="w-full bg-slate-800 hover:bg-slate-750 text-slate-300 border border-slate-700 text-center font-bold text-xs py-2 rounded-lg transition"
+                    className="w-full border border-rule bg-paper hover:bg-paper-100 text-ink text-center font-bold text-xs py-2 transition"
                   >
-                    Copy Image Prompt
+                    复制提示词
                   </button>
                 </div>
               ) : (
-                <div className="text-center py-8 text-slate-600 border border-slate-850 bg-slate-950/20 rounded-lg">
-                  <span className="text-[10px] font-semibold block">Click Compile on Left panel to construct cover coordinates.</span>
+                <div className="text-center py-8 text-ink-300 border border-rule bg-paper">
+                  <span className="text-[10px] font-semibold block">点击左侧“一键生成推广素材”后，此处将自动生成封面提示词。</span>
                 </div>
               )}
             </div>

@@ -88,15 +88,15 @@ export default function SkillRegistry() {
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 gap-6 h-[calc(100vh-180px)]">
       {/* Sidebar: Skills select index cards */}
-      <div className="md:col-span-1 border border-slate-800 bg-slate-900/40 rounded-xl p-4 flex flex-col justify-between overflow-y-auto space-y-4">
+      <div className="md:col-span-1 border border-rule bg-paper-50 p-4 flex flex-col justify-between overflow-y-auto space-y-4">
         <div className="space-y-3">
           <div className="flex justify-between items-center">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-              <Settings2 size={12} className="text-indigo-400" /> Guideline Modules
+            <h3 className="text-xs font-bold text-ink-400 uppercase tracking-widest flex items-center gap-1.5">
+              <Settings2 size={12} className="text-accent" /> Guideline Modules
             </h3>
             <button
               onClick={() => setShowAddModal(true)}
-              className="p-1 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 rounded transition border border-slate-800/80"
+              className="p-1 hover:bg-accent-faint text-accent hover:text-accent-hover rounded transition border border-rule"
               title="Add custom skill"
             >
               <Plus size={14} />
@@ -111,15 +111,15 @@ export default function SkillRegistry() {
                   setSelectedKey(skill.key);
                   setIsEditing(false);
                 }}
-                className={`w-full p-2.5 rounded-lg border text-left cursor-pointer transition flex items-center justify-between group ${
+                className={`w-full p-2.5 border-l-2 text-left cursor-pointer transition flex items-center justify-between group ${
                   selectedKey === skill.key
-                    ? 'bg-indigo-600/10 border-indigo-500/40 text-indigo-200'
-                    : 'bg-transparent border-transparent text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                    ? 'border-accent text-accent bg-accent-faint pl-3'
+                    : 'border-transparent text-ink-500 hover:bg-paper-100 hover:text-ink pl-3'
                 }`}
               >
                 <div className="min-w-0 pr-2">
                   <div className="text-xs font-bold truncate">{skill.name}</div>
-                  <div className="text-[10px] text-slate-500 truncate font-semibold mt-0.5">{skill.description}</div>
+                  <div className="text-[10px] text-ink-400 truncate font-semibold mt-0.5">{skill.description}</div>
                 </div>
                 {/* Prevent deleting default core assets */}
                 {!['workflow', 'outline_template', 'wolf_setting', 'logic_check', 'female_slap', 'degrease', 'blurb', 'connect_skills'].includes(skill.key) && (
@@ -128,7 +128,7 @@ export default function SkillRegistry() {
                       e.stopPropagation();
                       handleDeleteSkill(skill.key);
                     }}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-950/40 text-slate-500 hover:text-rose-400 transition"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-ink-400 hover:text-red-600 transition"
                   >
                     <Trash2 size={11} />
                   </button>
@@ -138,36 +138,36 @@ export default function SkillRegistry() {
           </div>
         </div>
 
-        <div className="text-[10px] text-slate-500 bg-slate-900/60 p-3 rounded-lg border border-slate-800/50 leading-normal">
+        <div className="text-[10px] text-ink-400 bg-paper-100 p-3 border border-rule leading-normal">
           💡 Preset guidelines are compiled instantly when the LLM generates drafts or outlines in writing workflows.
         </div>
       </div>
 
       {/* Editor & Content panel */}
-      <div className="md:col-span-3 border border-slate-700/40 bg-slate-900/20 backdrop-blur rounded-xl overflow-hidden flex flex-col justify-between">
+      <div className="md:col-span-3 border border-rule bg-paper overflow-hidden flex flex-col justify-between">
         {activeSkill ? (
           <>
             {/* Header toolbar */}
-            <div className="bg-slate-850 px-4 py-3 border-b border-slate-800 bg-slate-800/40 flex items-center justify-between">
+            <div className="px-4 py-3 border-b border-rule bg-paper-50 flex items-center justify-between">
               <div>
-                <span className="text-[10px] font-bold text-indigo-400 bg-indigo-950/40 border border-indigo-900/50 px-2 py-0.5 rounded uppercase font-mono">
+                <span className="text-[10px] font-bold text-accent bg-accent-faint border border-accent/20 px-2 py-0.5 uppercase font-mono">
                   {activeSkill.category}
                 </span>
-                <h2 className="text-sm font-bold text-slate-200 mt-1">{activeSkill.name}</h2>
+                <h2 className="text-sm font-bold text-ink mt-1 font-display">{activeSkill.name}</h2>
               </div>
 
               <div>
                 {isEditing ? (
                   <button
                     onClick={saveEdits}
-                    className="flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs px-3.5 py-1.5 rounded-lg transition"
+                    className="flex items-center gap-1.5 bg-grove text-white hover:bg-grove-muted font-semibold text-xs px-3.5 py-1.5 transition"
                   >
                     <Save size={13} /> Save Guideline
                   </button>
                 ) : (
                   <button
                     onClick={startEditing}
-                    className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs px-3.5 py-1.5 rounded-lg border border-slate-750 transition"
+                    className="flex items-center gap-1.5 border border-rule bg-paper hover:bg-paper-100 text-ink-500 font-semibold text-xs px-3.5 py-1.5 transition"
                   >
                     <Edit size={13} /> Edit Instructions
                   </button>
@@ -181,10 +181,10 @@ export default function SkillRegistry() {
                 <textarea
                   value={editedContent}
                   onChange={(e) => setEditedContent(e.target.value)}
-                  className="w-full h-full bg-slate-950/60 border border-slate-700 rounded-xl p-4 font-mono text-slate-200 text-xs focus:ring-1 focus:ring-indigo-500 focus:outline-none leading-relaxed resize-none"
+                  className="w-full h-full bg-paper-50 border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
                 />
               ) : (
-                <pre className="whitespace-pre-wrap font-sans text-slate-300 max-w-none text-xs leading-relaxed">
+                <pre className="whitespace-pre-wrap font-sans text-ink-600 max-w-none text-xs leading-relaxed">
                   {activeSkill.content}
                 </pre>
               )}
@@ -192,23 +192,23 @@ export default function SkillRegistry() {
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-400">
-            <FileCode size={40} className="text-slate-600 mb-2" />
-            <p className="text-xs">No instruction card active. Select one from left side bar panel.</p>
+            <FileCode size={40} className="text-ink-300 mb-2" />
+            <p className="text-xs text-ink-400">No instruction card active. Select one from left side bar panel.</p>
           </div>
         )}
       </div>
 
       {/* Creation Modal Form */}
       {showAddModal && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade">
-          <div className="bg-slate-800 border border-slate-705 rounded-xl max-w-xl w-full p-6 shadow-2xl space-y-4">
-            <h3 className="text-base font-bold text-slate-100 border-b border-slate-700 pb-2">
+        <div className="fixed inset-0 bg-ink/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-paper border border-rule max-w-xl w-full p-6 shadow-2xl space-y-4">
+            <h3 className="text-base font-black font-display text-ink border-b border-rule pb-2">
               Create / Upload Custom Guideline
             </h3>
             <form onSubmit={handleCreateSkill} className="space-y-4 text-xs">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-300 uppercase">Skill Title</label>
+                  <label className="font-bold text-ink-600 uppercase">Skill Title</label>
                   <input
                     type="text"
                     required
@@ -219,18 +219,18 @@ export default function SkillRegistry() {
                         setNewKey(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "_"));
                       }
                     }}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 focus:outline-none"
+                    className="w-full bg-paper-50 border border-rule px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent"
                     placeholder="e.g. 爽快爆笑爽文法则"
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-300 uppercase">Unique Key Handle</label>
+                  <label className="font-bold text-ink-600 uppercase">Unique Key Handle</label>
                   <input
                     type="text"
                     required
                     value={newKey}
                     onChange={(e) => setNewKey(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 font-mono focus:outline-none"
+                    className="w-full bg-paper-50 border border-rule px-3 py-1.5 font-mono focus:outline-none focus:ring-1 focus:ring-accent"
                     placeholder="e.g. funny_punch"
                   />
                 </div>
@@ -238,11 +238,11 @@ export default function SkillRegistry() {
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-300 uppercase">Category type</label>
+                  <label className="font-bold text-ink-600 uppercase">Category type</label>
                   <select
                     value={newCategory}
                     onChange={(e) => setNewCategory(e.target.value as any)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 focus:outline-none"
+                    className="w-full bg-paper-50 border border-rule px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent"
                   >
                     <option value="rule">Writing Rule (写作风格约束)</option>
                     <option value="template">Output Template (大纲/格式模板)</option>
@@ -251,12 +251,12 @@ export default function SkillRegistry() {
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="font-bold text-slate-300 uppercase">One-line description</label>
+                  <label className="font-bold text-ink-600 uppercase">One-line description</label>
                   <input
                     type="text"
                     value={newDesc}
                     onChange={(e) => setNewDesc(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 focus:outline-none"
+                    className="w-full bg-paper-50 border border-rule px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-accent"
                     placeholder="e.g. Adds dynamic comedic timing beats to slapback instances"
                   />
                 </div>
@@ -264,8 +264,8 @@ export default function SkillRegistry() {
 
               <div className="space-y-1.5">
                 <div className="flex justify-between items-center">
-                  <label className="font-bold text-slate-300 uppercase">Markdown instructions</label>
-                  <label className="cursor-pointer text-indigo-400 hover:text-indigo-300 font-semibold flex items-center gap-1">
+                  <label className="font-bold text-ink-600 uppercase">Markdown instructions</label>
+                  <label className="cursor-pointer text-accent hover:text-accent-hover font-semibold flex items-center gap-1">
                     <FileUp size={12} /> Upload .MD file
                     <input
                       type="file"
@@ -278,22 +278,22 @@ export default function SkillRegistry() {
                 <textarea
                   value={newContent}
                   onChange={(e) => setNewContent(e.target.value)}
-                  className="w-full h-40 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 font-mono resize-none focus:outline-none"
+                  className="w-full h-40 bg-paper-50 border border-rule px-3 py-2 font-mono resize-none focus:outline-none focus:ring-1 focus:ring-accent"
                   placeholder="# Enter instructions..."
                 />
               </div>
 
-              <div className="flex justify-end gap-3 border-t border-slate-700 pt-3 mt-4">
+              <div className="flex justify-end gap-3 border-t border-rule pt-3 mt-4">
                 <button
                   type="button"
                   onClick={() => setShowAddModal(false)}
-                  className="bg-slate-700 hover:bg-slate-600 text-slate-300 font-semibold px-4 py-1.5 rounded-lg"
+                  className="border border-rule bg-paper hover:bg-paper-100 text-ink-500 font-semibold px-4 py-1.5"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-4 py-1.5 rounded-lg flex items-center gap-1.5 shadow"
+                  className="bg-accent hover:bg-accent-hover text-white font-semibold px-4 py-1.5 flex items-center gap-1.5"
                 >
                   <CheckCircle2 size={13} /> Add Skill Module
                 </button>

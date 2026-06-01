@@ -7,6 +7,8 @@ export interface Project {
   rawExample: string; // The reference/example draft to imitate
   outline: string; // Generated outline
   createdAt: number;
+  titleCandidates?: string; // LLM 生成的书名候选
+  coverPrompt?: string;    // LLM 生成的封面提示词
 }
 
 export interface Chapter {
@@ -70,6 +72,17 @@ export interface APIConfig {
   temperature: number;
   maxTokens: number;
   extraHeaders?: Record<string, string>;
+}
+
+// 工作流阶段：大纲 / 正文 / 逻辑审查 / 营销（简介+书名+封面）
+export type StageRole = 'outline' | 'chapter' | 'review' | 'marketing';
+
+// 每个阶段指派到哪个供应商
+export interface StageAssignments {
+  outline: LLMProviderId;
+  chapter: LLMProviderId;
+  review: LLMProviderId;
+  marketing: LLMProviderId;
 }
 
 export interface LLMConnectionTestResult {
