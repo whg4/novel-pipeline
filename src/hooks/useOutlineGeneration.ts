@@ -109,7 +109,11 @@ export function useOutlineGeneration(
     if (!resume) setOutlineReviewOutput('');
     let wasPaused = false;
     try {
-      const compiled = compileOutlineLogicReviewPrompt(project.outline, logicSkill);
+      const compiled = compileOutlineLogicReviewPrompt(project.outline, logicSkill, {
+        background: project.background,
+        characters: project.characters,
+        rawExample: project.rawExample || undefined,
+      });
       let acc = resume ? outlineReviewOutput : '';
       await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
         acc += tok;
@@ -179,6 +183,7 @@ export function useOutlineGeneration(
         slapSkill,
         extraSkillContents,
         outlineExtraSkillText,
+        project.rawExample || undefined,
       );
 
       let accumulated = '';

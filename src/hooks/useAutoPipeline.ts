@@ -319,7 +319,12 @@ export function useAutoPipeline(
             autoState.phase = 'review';
             autoState.chapterIndex = i;
             autoState.chapterId = ch.id;
-            const reviewComp = compileLogicReviewPrompt(content, ch.chapterNumber, logicSkill);
+            const reviewComp = compileLogicReviewPrompt(content, ch.chapterNumber, logicSkill, true, {
+              chapterOutline: ch.outlineSection || undefined,
+              storyMemory: currentStoryMemory,
+              background: project.background,
+              characters: project.characters,
+            });
             if (resumingReview) {
               reviewComp.user += `\n--- 已生成但暂停的审查片段 ---\n${autoState.partialText}\n\n请从该片段后继续补全审查报告，不要重复已经输出的部分。`;
             }
@@ -345,7 +350,10 @@ export function useAutoPipeline(
         setAutoProgress({ step: '生成爆款简介', current: totalSteps - 1, total: totalSteps });
         const latestChapters = await db.chapters.where('projectId').equals(projectId).sortBy('chapterNumber');
         const sampleText = latestChapters.slice(0, 3).map(c => c.content).join('\n\n');
-        const blurbComp = compileBlurbPrompt(currentOutline, sampleText, blurbSkill);
+        const blurbComp = compileBlurbPrompt(currentOutline, sampleText, blurbSkill, {
+          background: project.background,
+          characters: project.characters,
+        });
         let blurbAcc = resume && autoState.partialText ? autoState.partialText : '';
         await runLLMStream('marketing', blurbComp.system, blurbComp.user, tok => {
           blurbAcc += tok;
@@ -361,7 +369,7 @@ export function useAutoPipeline(
       if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.title) {
         autoState.phase = 'title';
         setAutoProgress({ step: '生成书名', current: totalSteps, total: totalSteps });
-        const titleComp = compileTitlePrompt(currentOutline);
+        const titleComp = compileTitlePrompt(currentOutline, undefined, project.genre);
         let titleAcc = resume && autoState.partialText ? autoState.partialText : '';
         await runLLMStream('marketing', titleComp.system, titleComp.user, tok => {
           titleAcc += tok;
@@ -377,7 +385,10 @@ export function useAutoPipeline(
       if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.cover) {
         autoState.phase = 'cover';
         setAutoProgress({ step: '生成封面提示词', current: totalSteps, total: totalSteps });
-        const coverComp = compileCoverPrompt(currentOutline, project.genre);
+        const coverComp = compileCoverPrompt(currentOutline, project.genre, {
+          background: project.background,
+          characters: project.characters,
+        });
         let coverAcc = resume && autoState.partialText ? autoState.partialText : '';
         await runLLMStream('marketing', coverComp.system, coverComp.user, tok => {
           coverAcc += tok;

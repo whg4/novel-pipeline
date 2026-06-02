@@ -4,6 +4,7 @@ import { db } from '../db';
 import type { Project, Chapter, Skill, ChatMessage } from '../types';
 import {
   runLLMStream, compileChapterPrompt, compileLogicReviewPrompt, parseLogicReviewResult,
+  extractAndSaveStoryMemory,
 } from '../services/llm';
 import { stripLogicReview, sanitizeMarkdownFileName } from '../utils/pipeline';
 import type { GenerationTask } from './usePipelineTask';
@@ -166,6 +167,10 @@ export function useChapterDrafting(
     const prevChapters = chapters.filter(c => c.chapterNumber < (chapters.find(x => x.id === activeChapterId)?.chapterNumber || 0));
 
     try {
+      // 读取项目的故事记忆（跨章节连续性）
+      const fullProject = await db.projects.get(projectId);
+      const currentStoryMemory = fullProject?.storyMemory;
+
       const compiled = compileChapterPrompt({
         outline: project.outline,
         chapterNum: chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1,
@@ -175,6 +180,7 @@ export function useChapterDrafting(
         regenerationPrompt: effectivePrompt,
         extraSkillKeys: chapterExtraSkillKeys,
         extraSkillText: effectiveSkillText,
+        storyMemory: currentStoryMemory,
       });
 
       const recentFeedback = chapterChatMessages
@@ -201,6 +207,9 @@ export function useChapterDrafting(
       });
       if (!wasPaused) {
         await db.chatMessages.add({ projectId, scope: 'chapter', chapterId: activeChapterId, role: 'assistant', kind: 'chapter', content: accumulated, createdAt: Date.now() });
+        // 提取故事记忆（异步，失败不影响主流程）
+        const chNum = chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1;
+        await extractAndSaveStoryMemory(projectId, accumulated, chNum, currentStoryMemory);
       }
     } catch (e: any) {
       if (isPausedError(e)) {
@@ -247,7 +256,14 @@ export function useChapterDrafting(
     let acc = resume ? logicReviewOutput : '';
     let wasPaused = false;
     try {
-      const compiled = compileLogicReviewPrompt(ch.content, ch.chapterNumber, logicSkill);
+      // 读取项目完整信息作为审查上下文
+      const fullProject = await db.projects.get(projectId);
+      const compiled = compileLogicReviewPrompt(ch.content, ch.chapterNumber, logicSkill, true, {
+        chapterOutline: ch.outlineSection || undefined,
+        storyMemory: fullProject?.storyMemory,
+        background: fullProject?.background,
+        characters: fullProject?.characters,
+      });
       await runLLMStream('review', compiled.system, compiled.user, tok => {
         acc += tok;
         setLogicReviewOutput(acc);

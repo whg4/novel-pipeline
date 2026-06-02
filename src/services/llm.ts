@@ -761,6 +761,7 @@ export function compileOutlineRevisionPrompt(
   slapSkill?: string,
   extraSkillContents: string[] = [],
   extraSkillText = '',
+  example?: string,
 ): { system: string; user: string } {
   const system = `你是一位精通网文创作的资深编辑，专门进行大纲修订。你会根据审查反馈对现有大纲进行有针对性的修正，而非从头重写。
 严格遵循以下规则：
@@ -772,7 +773,7 @@ ${wolfSkill ? `\n--- 欧美狼人世界设定 ---\n${wolfSkill}` : ''}${slapSkil
 【修订原则】
 1. 仅针对审查反馈中指出的问题进行修正，不要大幅改动审查未提及的部分。
 2. 保持原大纲的整体结构、节奏和风格。
-3. 修正后的输出必须是完整大纲（不只是修改的部分）。`;
+3. 修正后的输出必须是完整大纲（不只是修改的部分）。${example ? '\n4. 修订时参照《参考例文》的节奏和风格，确保仿写忠实度。' : ''}`;
 
   const user = `
 --- 项目背景 ---
@@ -780,6 +781,7 @@ ${background || '未填写'}
 
 --- 人物设定 ---
 ${characters || '未填写'}
+${example ? `\n--- 参考例文（仿写依据）---\n${example}` : ''}
 
 --- 当前大纲（需要修订）---
 ${currentOutline}
@@ -795,8 +797,15 @@ ${reviewFeedback}
 // Compile outline logic review prompt
 export function compileOutlineLogicReviewPrompt(
   outline: string,
-  logicCheckSkill: string
+  logicCheckSkill: string,
+  projectContext?: { background?: string; characters?: string; rawExample?: string },
 ): { system: string; user: string } {
+  const contextSection = [
+    projectContext?.background ? `--- 项目背景 ---\n${projectContext.background}` : '',
+    projectContext?.characters ? `--- 人物设定 ---\n${projectContext.characters}` : '',
+    projectContext?.rawExample ? `--- 参考例文（节选）---\n${projectContext.rawExample.slice(0, 2000)}` : '',
+  ].filter(Boolean).join('\n\n');
+
   const system = `You are a meticulous literary editor specializing in story structure and plot consistency.
 You will review a novel outline and identify any logical issues, structural problems, or areas that need improvement.
 
@@ -805,14 +814,13 @@ ${logicCheckSkill}`;
 
   const user = `Please review the following novel outline for:
 1. Timeline and pacing consistency
-2. Character motivation coherence
+2. Character motivation coherence${projectContext?.characters ? ' (compare against character settings)' : ''}
 3. Plot logic and cause-effect chains
 4. Foreshadowing and payoff alignment
 5. Chapter structure and cliffhanger effectiveness
 6. Any gaps or contradictions
-
-For each issue found, provide a specific, actionable suggestion. Format your response as a structured review with clear sections.
-
+${projectContext?.rawExample ? '7. Whether the outline faithfully captures the reference text\'s structure and pacing\n' : ''}
+${contextSection ? `\n${contextSection}\n` : ''}
 --- NOVEL OUTLINE TO REVIEW ---
 ${outline}
 
@@ -949,15 +957,21 @@ ${regenerationPrompt?.trim() ? `--- 本章重写建议（高优先级）---\n${r
 export function compileBlurbPrompt(
   outline: string,
   customDraft: string,
-  blurbSkill: string
+  blurbSkill: string,
+  projectContext?: { background?: string; characters?: string },
 ): { system: string; user: string } {
+  const contextSection = [
+    projectContext?.background ? `--- 项目背景 ---\n${projectContext.background}` : '',
+    projectContext?.characters ? `--- 人物设定 ---\n${projectContext.characters}` : '',
+  ].filter(Boolean).join('\n\n');
+
   const system = `你是一位专精网文爆款简介（导语）写作的专家。必须严格遵循《爆款网文简介（导语）生成 Skill v4.1》的所有规则。
 简介要求：220-380 字，包含两场戏（当众退婚/切割 + 深夜后悔/跪求），至少一句高冲突台词，不讲梗概只呈现现场片段。`;
 
   const user = `
 --- 简介写作规则 ---
 ${blurbSkill}
-
+${contextSection ? `\n${contextSection}\n` : ''}
 --- 本书完整大纲 ---
 ${outline}
 
@@ -975,17 +989,29 @@ export function compileLogicReviewPrompt(
   chapterNum: number,
   logicCheckSkill: string,
   structured = true,
+  context?: {
+    chapterOutline?: string;
+    storyMemory?: import('../types').StoryMemory;
+    background?: string;
+    characters?: string;
+  },
 ): { system: string; user: string } {
+  const contextSection = [
+    context?.background ? `--- 项目背景 ---\n${context.background}` : '',
+    context?.characters ? `--- 人物设定 ---\n${context.characters}` : '',
+    context?.chapterOutline ? `--- 第 ${chapterNum} 章大纲（对照参考）---\n${context.chapterOutline}` : '',
+    context?.storyMemory ? `--- 故事记忆（已建立的事实）---\n角色状态：${context.storyMemory.characterStates}\n未收伏笔：${context.storyMemory.openForeshadowing}\n关键事件：${context.storyMemory.keyEvents}` : '',
+  ].filter(Boolean).join('\n\n');
+
   if (structured) {
     const system = `你是一位专业的小说逻辑审查编辑，严格依照《小说正文逻辑审查流程 Skill v3.2》执行审查。
 你必须输出严格 JSON，不要 Markdown 包裹，不要解释文字。JSON 结构如下：
 {"timeline":{"passed":true,"detail":"理由"},"location":{"passed":true,"detail":"理由"},"props":{"passed":true,"detail":"理由"},"characters":{"passed":true,"detail":"理由"},"emotionHook":{"passed":true,"detail":"理由"},"summary":"一句话总评"}
 passed 只能是 boolean。detail 用中文，必须具体指出通过依据或失败原因。`;
 
-    const user = `
---- 逻辑审查规则（Skill v3.2）---
+    const user = `--- 逻辑审查规则（Skill v3.2）---
 ${logicCheckSkill}
-
+${contextSection ? `\n${contextSection}\n` : ''}
 --- 需要审查的第 ${chapterNum} 章正文 ---
 ${chapterContent}
 
@@ -993,8 +1019,10 @@ ${chapterContent}
 1. 时间线（timeline）：是否有时间矛盾
 2. 地点（location）：是否有空间矛盾
 3. 道具（props）：获取时间、名称一致性、材质常识
-4. 人物与行为（characters）：已知信息行为悖论
-5. 情感节奏（emotionHook）：章末钩子是否已设置
+4. 人物与行为（characters）：已知信息行为悖论${context?.characters ? '（对照人物设定）' : ''}
+5. 情感节奏（emotionHook）：章末钩子是否已设置${context?.chapterOutline ? '（对照大纲要求）' : ''}
+${context?.chapterOutline ? '\n同时检查：正文是否完成了大纲中规定的关键事件。' : ''}
+${context?.storyMemory ? '\n同时检查：正文是否与已建立的故事记忆（角色状态、伏笔、关键事件）一致。' : ''}
 
 只输出 JSON。`;
 
@@ -1004,10 +1032,9 @@ ${chapterContent}
   // 非结构化格式（向后兼容）
   const system = `你是一位专业的小说逻辑审查编辑，严格依照《小说正文逻辑审查流程 Skill v3.2》执行审查。只输出格式化审查报告，不做其他说明。`;
 
-  const user = `
---- 逻辑审查规则（Skill v3.2）---
+  const user = `--- 逻辑审查规则（Skill v3.2）---
 ${logicCheckSkill}
-
+${contextSection ? `\n${contextSection}\n` : ''}
 --- 需要审查的第 ${chapterNum} 章正文 ---
 ${chapterContent}
 
@@ -1128,7 +1155,9 @@ export async function extractAndSaveStoryMemory(
 }
 
 // Compile book title candidates prompt
-export function compileTitlePrompt(outline: string, customHint?: string): { system: string; user: string } {
+export function compileTitlePrompt(outline: string, customHint?: string, genre?: string): { system: string; user: string } {
+  const genreLabel = genre === 'classic-wolf' ? '欧美部落狼人' : genre === 'female-slap' ? '大女主打脸爽文' : '都市爽文';
+
   const system = `你是一位专精爆款网文（爽文）书名创作的专家。书名要简洁有力、带强烈情绪张力、适合在各平台传播，使用大众易懂词汇，避免生僻或高大上词汇。`;
 
   const customSection = customHint?.trim()
@@ -1138,6 +1167,8 @@ export function compileTitlePrompt(outline: string, customHint?: string): { syst
   const user = `
 --- 以下是本书的完整大纲 ---
 ${outline}
+
+书籍类型：${genreLabel}
 ${customSection}
 请根据上述大纲，生成 8 组爽文风格备选书名，每组包含：
 - 中文书名（带《》）
@@ -1156,7 +1187,7 @@ ${customSection}
 }
 
 // Compile AI image cover prompt
-export function compileCoverPrompt(outline: string, genre: string): { system: string; user: string } {
+export function compileCoverPrompt(outline: string, genre: string, projectContext?: { background?: string; characters?: string }): { system: string; user: string } {
   const genreLabel = genre === 'classic-wolf' ? '欧美部落狼人' : genre === 'female-slap' ? '大女主打脸爽文' : '都市爽文';
 
   const system = `你是一位专业的网文封面设计提示词工程师，擅长为 AI 绘图模型（DALL-E 3 / Midjourney）生成高转化率的竖版小说封面英文提示词。`;
@@ -1166,6 +1197,8 @@ export function compileCoverPrompt(outline: string, genre: string): { system: st
 ${outline}
 
 书籍类型：${genreLabel}
+${projectContext?.background ? `\n--- 世界观背景 ---\n${projectContext.background}` : ''}
+${projectContext?.characters ? `\n--- 人物设定 ---\n${projectContext.characters}` : ''}
 
 请基于大纲核心人物形象、情绪基调与高潮冲突场景，生成一段用于 AI 绘图的英文提示词。要求：
 - 竖版构图，比例 7:10，适合裁剪为 700×1000

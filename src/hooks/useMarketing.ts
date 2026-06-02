@@ -62,7 +62,10 @@ export function useMarketing(
     try {
       const blurbTemplate = skills.find(s => s.key === 'blurb')?.content || '';
       const sampleText = chapters.slice(0, 3).map(c => c.content).join('\n\n');
-      const blurbCompiled = compileBlurbPrompt(project.outline, sampleText, blurbTemplate);
+      const blurbCompiled = compileBlurbPrompt(project.outline, sampleText, blurbTemplate, {
+        background: project.background,
+        characters: project.characters,
+      });
       let blurbAcc = '';
       await runLLMStream('marketing', blurbCompiled.system, blurbCompiled.user, tok => {
         blurbAcc += tok;
@@ -79,7 +82,7 @@ export function useMarketing(
     if (!project) return;
     updateSubtaskStatus('titles', 'running');
     try {
-      const titleCompiled = compileTitlePrompt(project.outline);
+      const titleCompiled = compileTitlePrompt(project.outline, undefined, project.genre);
       let titleAcc = '';
       await runLLMStream('marketing', titleCompiled.system, titleCompiled.user, tok => { titleAcc += tok; }, streamOptions);
       await db.projects.update(projectId, { titleCandidates: titleAcc });
@@ -95,7 +98,10 @@ export function useMarketing(
     if (!project) return;
     updateSubtaskStatus('cover', 'running');
     try {
-      const coverCompiled = compileCoverPrompt(project.outline, project.genre);
+      const coverCompiled = compileCoverPrompt(project.outline, project.genre, {
+        background: project.background,
+        characters: project.characters,
+      });
       let coverAcc = '';
       await runLLMStream('marketing', coverCompiled.system, coverCompiled.user, tok => { coverAcc += tok; }, streamOptions);
       await db.projects.update(projectId, { coverPrompt: coverAcc });
@@ -149,7 +155,7 @@ export function useMarketing(
     let wasPaused = false;
 
     try {
-      const comp = compileTitlePrompt(project.outline, titleCustomPrompt);
+      const comp = compileTitlePrompt(project.outline, titleCustomPrompt, project.genre);
       await runLLMStream('marketing', comp.system, comp.user, tok => {
         acc += tok;
         setTitleOutput(acc);
