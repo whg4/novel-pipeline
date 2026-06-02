@@ -1586,23 +1586,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
           {/* ChatPanel area */}
           <div className="xl:col-span-3 space-y-3">
-            {/* Collapsible chapter outline editor */}
-            {showChapterOutlineEditor && activeChapterId !== null && (
-              <div className="bg-paper-50 border border-rule p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-bold text-ink-400 uppercase tracking-widest">本章大纲要求</label>
-                  <button onClick={() => setShowChapterOutlineEditor(false)} className="text-[10px] text-ink-400 hover:text-ink font-semibold">折叠 ×</button>
-                </div>
-                <textarea
-                  value={editingOutline}
-                  onChange={(e) => setEditingOutline(e.target.value)}
-                  rows={5}
-                  className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:outline-none focus:border-accent leading-relaxed resize-none"
-                  placeholder="将本章大纲片段粘贴在此..."
-                />
-              </div>
-            )}
-
             {/* Grease warnings */}
             {greaseWarnings.length > 0 && (
               <div className="bg-accent-pale border border-accent/40 p-3 space-y-1.5">
@@ -1749,7 +1732,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
                     {/* 章节大纲 */}
                     <button
-                      onClick={() => setShowChapterOutlineEditor(v => !v)}
+                      onClick={() => setShowChapterOutlineEditor(true)}
                       className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                     >
                       <Edit3 size={10} /> 章节大纲
@@ -1922,6 +1905,55 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           </div>
         </div>
       )}
+      {/* Chapter outline editor modal */}
+      {showChapterOutlineEditor && activeChapterId !== null && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setShowChapterOutlineEditor(false)}
+        >
+          <div
+            className="bg-paper border border-rule shadow-xl flex flex-col w-full max-w-2xl mx-4"
+            style={{ maxHeight: '80vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-rule shrink-0">
+              <h2 className="text-sm font-black font-display text-ink">本章大纲要求</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={async () => {
+                    const ch = chapters.find(c => c.id === activeChapterId);
+                    if (ch?.id) await db.chapters.update(ch.id, { outlineSection: editingOutline });
+                    setShowChapterOutlineEditor(false);
+                  }}
+                  className="flex items-center gap-1 text-[10px] font-bold text-white bg-accent hover:bg-accent-hover px-3 py-1 transition"
+                >
+                  保存
+                </button>
+                <button
+                  onClick={() => setShowChapterOutlineEditor(false)}
+                  className="text-ink-400 hover:text-ink p-1 transition"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 min-h-0">
+              <textarea
+                value={editingOutline}
+                onChange={(e) => setEditingOutline(e.target.value)}
+                className="w-full h-full bg-paper border border-rule p-3 font-mono text-[11px] text-ink focus:outline-none focus:border-accent leading-relaxed resize-none"
+                style={{ minHeight: '320px' }}
+                placeholder="将本章大纲片段粘贴在此..."
+                autoFocus
+              />
+            </div>
+            <div className="px-4 py-2 border-t border-rule shrink-0 text-[10px] text-ink-400">
+              内容将在关闭前点击"保存"时写入数据库，生成正文时作为参考。
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Chapter content viewer modal */}
       {viewingChapter && (
         <div

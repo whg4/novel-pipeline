@@ -111,11 +111,15 @@ export default function ChatPanel({
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Scroll to bottom on new messages or while streaming
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, isStreaming, streamingContent.length > 0]);
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [messages.length, streamingContent]);
 
   const handleSend = () => {
     const text = input.trim();
@@ -137,20 +141,7 @@ export default function ChatPanel({
       style={{ height: 'calc(100vh - 240px)', minHeight: '480px' }}
     >
       {/* ── Messages area ── */}
-      <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Clear button header */}
-        {(messages.length > 0 || isStreaming) && onClear && (
-          <div className="flex justify-end px-3 pt-2">
-            <button
-              onClick={() => {
-                if (window.confirm('清除所有对话记录？')) onClear();
-              }}
-              className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-red-500 border border-rule px-2 py-0.5 bg-paper hover:bg-red-50 transition"
-            >
-              <Trash2 size={9} /> 清屏
-            </button>
-          </div>
-        )}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
         <div className="p-4 space-y-4">
         {messages.length === 0 && !isStreaming && (
           <div className="flex flex-col items-center justify-center h-full text-ink-300 gap-2">
@@ -231,9 +222,21 @@ export default function ChatPanel({
 
       {/* ── Toolbar + Input ── */}
       <div className="border-t border-rule p-3 space-y-2 bg-paper shrink-0">
-        {toolbar && (
-          <div className="flex flex-wrap gap-1.5 pb-1.5 border-b border-rule">
-            {toolbar}
+        {(toolbar || onClear) && (
+          <div className="flex flex-wrap items-center gap-1.5 pb-1.5 border-b border-rule">
+            <div className="flex flex-wrap gap-1.5 flex-1">
+              {toolbar}
+            </div>
+            {onClear && (
+              <button
+                onClick={() => {
+                  if (window.confirm('清除所有对话记录？')) onClear();
+                }}
+                className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-red-500 border border-rule px-2 py-1 bg-paper hover:bg-red-50 transition shrink-0"
+              >
+                <Trash2 size={9} /> 清屏
+              </button>
+            )}
           </div>
         )}
         <div className="flex gap-2 items-end">
