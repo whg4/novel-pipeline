@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import { Project, Chapter, Skill } from './types';
+import { Project, Chapter, Skill, ChatMessage } from './types';
 
 import workflowMd from '../docs/AI仿写短篇小说工作流 v3.0.md?raw';
 import outlineTemplateMd from '../docs/仿写大纲输出格式模板 v3.0.md?raw';
@@ -14,6 +14,7 @@ export class NovelDatabase extends Dexie {
   projects!: Table<Project>;
   chapters!: Table<Chapter>;
   skills!: Table<Skill>;
+  chatMessages!: Table<ChatMessage>;
 
   constructor() {
     super('NovelPipelineDB');
@@ -21,6 +22,12 @@ export class NovelDatabase extends Dexie {
       projects: '++id, title, genre, createdAt',
       chapters: '++id, projectId, chapterNumber, isCompleted, lastEdited',
       skills: 'key, name, category',
+    });
+    this.version(2).stores({
+      projects: '++id, title, genre, createdAt',
+      chapters: '++id, projectId, chapterNumber, isCompleted, lastEdited',
+      skills: 'key, name, category',
+      chatMessages: '++id, [projectId+scope], [projectId+scope+chapterId], createdAt',
     });
   }
 }

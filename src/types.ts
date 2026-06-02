@@ -116,6 +116,17 @@ export interface StageAssignments {
   marketing: LLMProviderId;
 }
 
+export interface ChatMessage {
+  id?: number;
+  projectId: number;
+  scope: 'outline' | 'chapter';
+  chapterId?: number;
+  role: 'user' | 'assistant';
+  kind?: 'outline' | 'review' | 'chapter' | 'logic-review';
+  content: string;
+  createdAt: number;
+}
+
 export interface LLMConnectionTestResult {
   ok: boolean;
   providerName: string;

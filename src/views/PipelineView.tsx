@@ -1,18 +1,21 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
-import type { Chapter } from '../types';
+import type { Chapter, ChatMessage } from '../types';
 import {
   runLLMStream, compileOutlinePrompt, compileOutlineLogicReviewPrompt,
   compileChapterPrompt, compileBlurbPrompt,
   compileLogicReviewPrompt, compileTitlePrompt, compileCoverPrompt,
   LLM_PAUSED_ERROR
 } from '../services/llm';
-import { 
+import {
   Sparkles, BookOpen, Layers, Edit3, Plus, Save, Copy, FileUp,
-  AlertTriangle, RefreshCw, Play, Pause, FileSearch, Type, ImageIcon, Download,
-  MessageSquare
+  AlertTriangle, RefreshCw, Play, Pause, FileSearch, ImageIcon, Download,
+  PenLine
 } from 'lucide-react';
+import ChatPanel from '../components/ChatPanel';
+import TitleModal from '../components/TitleModal';
+import ExampleModal from '../components/ExampleModal';
 
 interface PipelineViewProps {
   projectId: number;
@@ -177,10 +180,35 @@ async function syncOutlineChaptersToDb(outline: string, projectId: number): Prom
 }
 
 export default function PipelineView({ projectId }: PipelineViewProps) {
+  // Chapter selection — must be declared before useLiveQuery hooks that depend on it
+  const [activeChapterId, setActiveChapterId] = useState<number | null>(null);
+
   // Query state
   const project = useLiveQuery(() => db.projects.get(projectId), [projectId]);
   const chapters = useLiveQuery(() => db.chapters.where('projectId').equals(projectId).sortBy('chapterNumber'), [projectId]) || [];
+
+  // Sync project title into editing state when project first loads
+  useEffect(() => {
+    if (project?.title && !editingProjectTitle) {
+      setEditingProjectTitle(project.title);
+    }
+  }, [project?.title]);
   const skills = useLiveQuery(() => db.skills.toArray()) || [];
+
+  // Chat message history
+  const outlineChatMessages: ChatMessage[] = useLiveQuery<ChatMessage[], ChatMessage[]>(
+    () => db.chatMessages.where('[projectId+scope]').equals([projectId, 'outline']).sortBy('createdAt') as any,
+    [projectId],
+    []
+  );
+
+  const chapterChatMessages: ChatMessage[] = useLiveQuery<ChatMessage[], ChatMessage[]>(
+    () => activeChapterId
+      ? db.chatMessages.where('[projectId+scope+chapterId]').equals([projectId, 'chapter', activeChapterId]).sortBy('createdAt') as any
+      : Promise.resolve([]),
+    [projectId, activeChapterId],
+    []
+  );
 
   // View States
   const [pipelineTab, setPipelineTab] = useState<'outline' | 'drafting' | 'marketing'>('outline');
@@ -195,14 +223,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // ----------------------------------------------------
   const [outlineGenerationStatus, setOutlineGenerationStatus] = useState('');
   const [outlineReviewOutput, setOutlineReviewOutput] = useState('');
-  const [outlineFeedback, setOutlineFeedback] = useState('');
+  const [outlineFeedback, _setOutlineFeedback] = useState('');
   const [outlineExtraSkillKeys, setOutlineExtraSkillKeys] = useState<string[]>([]);
   const [outlineExtraSkillText, setOutlineExtraSkillText] = useState('');
 
   // ----------------------------------------------------
   // SUB-TAB 2: DRAFTING ROOM STATE
   // ----------------------------------------------------
-  const [activeChapterId, setActiveChapterId] = useState<number | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [editingOutline, setEditingOutline] = useState('');
   const [editingDraft, setEditingContent] = useState('');
@@ -212,6 +239,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [chapterExtraSkillKeys, setChapterExtraSkillKeys] = useState<string[]>([]);
   const [chapterExtraSkillText, setChapterExtraSkillText] = useState('');
   const [editingProjectTitle, setEditingProjectTitle] = useState('');
+
+  // ----------------------------------------------------
+  // UI: MODAL + POPOVER STATE
+  // ----------------------------------------------------
+  const [showTitleModal, setShowTitleModal] = useState(false);
+  const [showExampleModal, setShowExampleModal] = useState(false);
+  const [showOutlineEditor, setShowOutlineEditor] = useState(false);
+  const [showChapterOutlineEditor, setShowChapterOutlineEditor] = useState(false);
+  const [showOutlineSkillPopover, setShowOutlineSkillPopover] = useState(false);
+  const [showChapterSkillPopover, setShowChapterSkillPopover] = useState(false);
 
   // Load first chapter automatically on startup if none selected
   useEffect(() => {
@@ -458,7 +495,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   // ----------------------------------------------------
   // ENGINE 1: OUTLINE GENERATION
   // ----------------------------------------------------
-  const handleGenerateOutline = async (resume = false, extraSlapSkill?: string) => {
+  const handleGenerateOutline = async (resume = false, extraSlapSkill?: string, feedbackOverride?: string) => {
     const streamOptions = beginGenerationTask('outline', resume);
     setIsGenerating(true);
     if (!resume) setGenerationOutput('');
@@ -472,6 +509,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       : undefined);
     let latestOutline = resume ? generationOutput : '';
     let wasPaused = false;
+    const effectiveFeedback = feedbackOverride !== undefined ? feedbackOverride : outlineFeedback;
 
     try {
       const compiled = compileOutlinePrompt(
@@ -479,13 +517,23 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         project.background,
         project.characters,
         template,
-        outlineFeedback || undefined,
+        effectiveFeedback || undefined,
         wolfSkill,
         slapSkill,
         outlineExtraSkillKeys,
         outlineExtraSkillText,
         skills
       );
+
+      // Inject recent chat feedback history as context
+      const recentFeedback = outlineChatMessages
+        .filter(m => m.role === 'user')
+        .slice(-4)
+        .map(m => m.content)
+        .join('\n---\n');
+      if (recentFeedback && !effectiveFeedback) {
+        compiled.user += `\n\n【历史修改要求（参考）】\n${recentFeedback}`;
+      }
 
       if (resume && latestOutline) {
         compiled.user += `\n--- 已生成但被暂停的大纲片段 ---\n${latestOutline}\n\n请从该片段后继续补全，不要重写已经完整输出的部分。`;
@@ -500,6 +548,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
       await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
       setOutlineGenerationStatus('大纲已生成并保存。');
+      // Save to chat history
+      if (!wasPaused) {
+        await db.chatMessages.add({ projectId, scope: 'outline', role: 'assistant', kind: 'outline', content: accumulated, createdAt: Date.now() });
+      }
     } catch (e: any) {
       if (isPausedError(e)) {
         wasPaused = true;
@@ -535,6 +587,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         acc += tok;
         setOutlineReviewOutput(acc);
       }, streamOptions);
+      // Save to chat history
+      if (!wasPaused) {
+        await db.chatMessages.add({ projectId, scope: 'outline', role: 'assistant', kind: 'review', content: acc, createdAt: Date.now() });
+      }
     } catch (e: any) {
       if (isPausedError(e)) {
         wasPaused = true;
@@ -615,7 +671,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     alert('草稿已保存。');
   };
 
-  const handleGenerateChapterStream = async (resume = false) => {
+  const handleGenerateChapterStream = async (resume = false, promptOverride?: string, extraSkillTextOverride?: string) => {
     if (activeChapterId === null) return;
     const streamOptions = beginGenerationTask('chapter', resume);
     setIsGenerating(true);
@@ -623,6 +679,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     if (!resume) setEditingContent('');
     let accumulated = resume ? editingDraft : '';
     let wasPaused = false;
+    const effectivePrompt = promptOverride !== undefined ? promptOverride : chapterRegenerationPrompt;
+    const effectiveSkillText = extraSkillTextOverride !== undefined ? extraSkillTextOverride : chapterExtraSkillText;
     
     // Determine preceding chapters for stich context
     const prevChapters = chapters.filter(c => c.chapterNumber < (chapters.find(x => x.id === activeChapterId)?.chapterNumber || 0));
@@ -634,10 +692,20 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         chapterOutline: editingOutline,
         previousChapters: prevChapters,
         skills,
-        regenerationPrompt: chapterRegenerationPrompt,
+        regenerationPrompt: effectivePrompt,
         extraSkillKeys: chapterExtraSkillKeys,
-        extraSkillText: chapterExtraSkillText,
+        extraSkillText: effectiveSkillText,
       });
+
+      // Inject recent chat feedback as context
+      const recentFeedback = chapterChatMessages
+        .filter(m => m.role === 'user')
+        .slice(-3)
+        .map(m => m.content)
+        .join('\n---\n');
+      if (recentFeedback && !effectivePrompt) {
+        compiled.user += `\n\n【历史修改要求（参考）】\n${recentFeedback}`;
+      }
 
       if (resume && accumulated) {
         compiled.user += `\n--- 已生成但被暂停的正文片段 ---\n${accumulated}\n\n请从该片段最后一句之后继续续写，只输出后续正文，不要重复已经写过的内容。`;
@@ -653,6 +721,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         content: accumulated,
         lastEdited: Date.now()
       });
+      // Save to chat history
+      if (!wasPaused) {
+        await db.chatMessages.add({ projectId, scope: 'chapter', chapterId: activeChapterId, role: 'assistant', kind: 'chapter', content: accumulated, createdAt: Date.now() });
+      }
     } catch (e: any) {
       if (isPausedError(e)) {
         wasPaused = true;
@@ -756,12 +828,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   };
 
   // Helper copy text
-  const handleCopyText = (txt: string) => {
-    const cleanDraft = stripLogicReview(txt);
-
-    navigator.clipboard.writeText(cleanDraft);
-    alert('正文已复制到剪贴板（审查内容已排除）。');
-  };
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
 
   const handleExportNovelMarkdown = () => {
     const exportChapters = [...chapters]
@@ -811,6 +878,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         setLogicReviewOutput(acc);
       }, streamOptions);
       await db.chapters.update(ch.id!, { logicCheckLog: acc });
+      // Save to chat history
+      if (!wasPaused) {
+        await db.chatMessages.add({ projectId, scope: 'chapter', chapterId: ch.id!, role: 'assistant', kind: 'logic-review', content: acc, createdAt: Date.now() });
+      }
     } catch (e: any) {
       if (isPausedError(e)) {
         wasPaused = true;
@@ -1109,28 +1180,57 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     }
   };
 
+  // ----------------------------------------------------
+  // CHAT SEND HANDLERS
+  // ----------------------------------------------------
+  const handleOutlineChatSend = async (userText: string) => {
+    if (userText.trim()) {
+      await db.chatMessages.add({ projectId, scope: 'outline', role: 'user', content: userText, createdAt: Date.now() });
+    }
+    await handleGenerateOutline(false, undefined, userText || undefined);
+  };
+
+  const handleChapterChatSend = async (userText: string, extraSkillTextOverride?: string) => {
+    if (activeChapterId === null) return;
+    if (userText.trim()) {
+      await db.chatMessages.add({ projectId, scope: 'chapter', chapterId: activeChapterId, role: 'user', content: userText, createdAt: Date.now() });
+      setChapterRegenerationPrompt(userText);
+      await db.chapters.update(activeChapterId, { regenerationPrompt: userText });
+    }
+    await handleGenerateChapterStream(false, userText || undefined, extraSkillTextOverride);
+  };
+
   return (
     <div className="space-y-6">
       {/* 项目标题与导航 */}
       <div className="border-b-2 border-ink pb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
           <div className="text-[10px] font-bold text-ink-400 uppercase tracking-widest">当前项目</div>
-          <input
-            type="text"
-            value={editingProjectTitle}
-            onChange={(e) => setEditingProjectTitle(e.target.value)}
-            onBlur={async () => {
-              const newTitle = editingProjectTitle.trim() || '未命名项目';
-              if (newTitle !== project.title) {
-                await db.projects.update(projectId, { title: newTitle });
-              }
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-            }}
-            className="text-xl font-black font-display text-ink mt-0.5 bg-transparent border-b border-transparent hover:border-rule focus:border-accent focus:outline-none w-full max-w-xs"
-            placeholder="项目书名（点击编辑）"
-          />
+          <div className="flex items-center gap-2 mt-0.5">
+            <input
+              type="text"
+              value={editingProjectTitle}
+              onChange={(e) => setEditingProjectTitle(e.target.value)}
+              onBlur={async () => {
+                const newTitle = editingProjectTitle.trim() || '未命名项目';
+                if (newTitle !== project.title) {
+                  await db.projects.update(projectId, { title: newTitle });
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              }}
+              className="text-xl font-black font-display text-ink bg-transparent border-b border-transparent hover:border-rule focus:border-accent focus:outline-none w-full max-w-xs"
+              placeholder="项目书名（点击编辑）"
+            />
+            <button
+              onClick={() => setShowTitleModal(true)}
+              title="生成备选书名"
+              className="p-1 text-ink-400 hover:text-accent border border-rule hover:border-accent bg-paper hover:bg-accent-faint transition shrink-0"
+            >
+              <PenLine size={13} />
+            </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 flex-wrap">
@@ -1141,15 +1241,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             <Download size={12} /> 导出小说
           </button>
 
-          {/* 一键全自动按鈕 */}
-          <button
-            onClick={() => handleRunAutoPipeline()}
-            disabled={isGenerating || isAutoRunning}
-            className="flex items-center gap-1.5 bg-grove hover:bg-grove-muted disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 transition"
-          >
-            <Play size={12} className={isAutoRunning ? 'animate-pulse' : ''} />
-            {isAutoRunning ? '运行中...' : '一键全自动'}
-          </button>
+          {/* 一键全自动按钮已屏蔽 */}
 
           {/* 标签切换 */}
           <div className="flex border-b border-rule">
@@ -1238,261 +1330,181 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       {/* ---------------------------------------------------- */}
       {pipelineTab === 'outline' && (
         <div className="space-y-4">
-          {/* 例文输入 */}
-          <div className="bg-paper-50 border border-rule p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                <FileUp size={13} className="text-accent" /> 例文输入
-              </h3>
-              <label className="flex items-center gap-1.5 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-xs font-bold px-3 py-1.5 cursor-pointer transition">
-                <FileUp size={12} /> 上传 TXT
-                <input
-                  type="file"
-                  accept=".txt"
-                  className="hidden"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = async (ev) => {
-                      const text = ev.target?.result as string;
-                      await db.projects.update(projectId, { rawExample: text });
-                    };
-                    reader.readAsText(file, 'utf-8');
-                    e.target.value = '';
-                  }}
-                />
-              </label>
-            </div>
-            <textarea
-              value={project.rawExample || ''}
-              onChange={(e) => db.projects.update(projectId, { rawExample: e.target.value })}
-              rows={4}
-              className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-              placeholder="上传或粘贴例文（支持 TXT 上传，也可直接粘贴）——大纲生成将仿写其节奏与张力曲线。"
-            />
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 space-y-4">
-            <div className="bg-paper-50 border border-rule p-5 flex flex-col h-[calc(100vh-240px)]">
-              <div className="flex-1 flex flex-col gap-3 min-h-0">
-                <div className="flex justify-between items-center pb-2 border-b border-rule shrink-0">
-                  <h3 className="text-sm font-bold text-ink flex items-center gap-1.5">
-                    <Layers size={15} className="text-accent" /> 大纲编辑
-                  </h3>
-                  <div className="flex items-center gap-2">
-                    <button
-                      disabled={!project.outline}
-                      onClick={() => {
-                        const blob = new Blob([project.outline], { type: 'text/markdown' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `《${project.title || '未命名'}》大纲.md`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}
-                      className="bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
-                    >
-                      <Download size={12} /> 导出 MD
-                    </button>
-                    <button
-                      disabled={isGenerating}
-                      onClick={async () => {
-                        const n = await syncOutlineChaptersToDb(project.outline, projectId);
-                        alert(n > 0 ? `已同步 ${n} 个章节到数据库。` : '未在大纲中找到章节（请确认包含“### 第 X 章：”格式）。');
-                      }}
-                      className="bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
-                    >
-                      <BookOpen size={12} /> 同步章节
-                    </button>
-                    <button
-                      disabled={isGenerating}
-                      onClick={() => handleGenerateOutline()}
-                      className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 flex items-center gap-1.5 transition"
-                    >
-                      <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
-                      {project.outline ? '重新生成' : '生成大纲'}
-                    </button>
-                    {renderTaskControl('outline', () => handleGenerateOutline(true))}
-                  </div>
-                </div>
-
-                <div className="flex-1 min-h-0">
-                  {isGenerating && !generationOutput ? (
-                    <div className="flex flex-col items-center justify-center py-20 text-ink-400 space-y-2">
-                      <RefreshCw size={24} className="animate-spin text-ink-300" />
-                      <p className="text-xs">{outlineGenerationStatus || '正在调用模型生成大纲...'}</p>
-                    </div>
-                  ) : (
-                    <textarea
-                      value={isGenerating ? splitOutlineSections(generationOutput).main : splitOutlineSections(project.outline).main}
-                      onChange={(e) => handleUpdateOutlineManual(e.target.value)}
-                      className="w-full h-full bg-paper border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                      placeholder="大纲将在此生成。填写背景、人物设定与参考模板后，点击「生成大纲」..."
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Right Panel: 大纲审查 & 反馈 */}
-          <div className="space-y-4">
-
-              {/* 逻辑审查大纲 */}
-              <div className="bg-paper-50 border border-rule p-4 space-y-3">
+          {/* Collapsible raw outline editor */}
+          {showOutlineEditor && (
+            <div className="bg-paper-50 border border-rule p-4 space-y-2">
+              <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                  <FileSearch size={13} className="text-grove" /> 逻辑审查大纲
+                  <Edit3 size={13} className="text-accent" /> 原始大纲编辑
                 </h3>
+                <button onClick={() => setShowOutlineEditor(false)} className="text-[10px] text-ink-400 hover:text-ink font-semibold">
+                  折叠 ×
+                </button>
+              </div>
+              <textarea
+                value={splitOutlineSections(project.outline).main}
+                onChange={(e) => handleUpdateOutlineManual(e.target.value)}
+                rows={12}
+                className="w-full bg-paper border border-rule p-3 font-mono text-xs text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
+                placeholder="直接编辑大纲正文..."
+              />
+            </div>
+          )}
+
+          {/* ChatPanel */}
+          <ChatPanel
+            messages={outlineChatMessages}
+            isStreaming={isGenerating && (activeTask === 'outline' || activeTask === 'outline-review')}
+            streamingContent={activeTask === 'outline' ? generationOutput : outlineReviewOutput}
+            streamingLabel={activeTask === 'outline' ? (outlineGenerationStatus || '生成大纲中...') : '审查大纲中...'}
+            onSend={handleOutlineChatSend}
+            disabled={!project}
+            placeholder="输入修改意见后按 Enter 发送，或点击上方按钮直接生成大纲..."
+            toolbar={
+              <>
+                {/* 重新生成 */}
+                <button
+                  disabled={isGenerating}
+                  onClick={() => handleOutlineChatSend('')}
+                  className="flex items-center gap-1 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-[10px] font-bold px-2.5 py-1.5 transition"
+                >
+                  <Sparkles size={10} className={activeTask === 'outline' && isGenerating ? 'animate-spin' : ''} />
+                  {project.outline ? '重新生成' : '生成大纲'}
+                </button>
+                {renderTaskControl('outline', () => handleGenerateOutline(true))}
+
+                {/* 打脸闭环 */}
+                <button
+                  disabled={isGenerating}
+                  onClick={() => {
+                    const slapContent = skills.find(s => s.key === 'female_slap')?.content || '';
+                    handleGenerateOutline(false, slapContent);
+                  }}
+                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                >
+                  <Sparkles size={10} /> 打脸闭环
+                </button>
+
+                {/* 审查大纲 */}
                 <button
                   disabled={isGenerating || !project.outline}
                   onClick={() => handleReviewOutline()}
-                  className="w-full bg-grove hover:bg-grove-muted disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <FileSearch size={12} className={activeTask === 'outline-review' && isGenerating ? 'animate-spin' : ''} />
+                  <FileSearch size={10} className={activeTask === 'outline-review' && isGenerating ? 'animate-spin' : ''} />
                   审查大纲
                 </button>
                 {renderTaskControl('outline-review', () => handleReviewOutline(true))}
-                {outlineReviewOutput && (
-                  <div className="space-y-2">
-                    <textarea
-                      readOnly
-                      value={outlineReviewOutput}
-                      rows={8}
-                      className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:outline-none leading-relaxed resize-none"
-                    />
-                    <button
-                      onClick={() => { navigator.clipboard.writeText(outlineReviewOutput); alert('审查结果已复制！'); }}
-                      className="w-full border border-rule bg-paper hover:bg-paper-100 text-ink-500 text-xs font-bold py-1.5 flex items-center justify-center gap-1.5 transition"
-                    >
-                      <Copy size={11} /> 复制审查结果
-                    </button>
-                  </div>
-                )}
-              </div>
 
-              {/* 手动修改建议 → 重新生成 */}
-              <div className="bg-paper-50 border border-rule p-4 space-y-3">
-                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                  <MessageSquare size={13} className="text-accent" /> 按建议重新生成
-                </h3>
-                <textarea
-                  value={outlineFeedback}
-                  onChange={(e) => setOutlineFeedback(e.target.value)}
-                  rows={4}
-                  className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                  placeholder="粘贴审查建议或手动输入修改方向，然后点击下方按钮重新生成大纲..."
-                />
-                <div className="flex flex-col gap-2">
-                  <button
-                    disabled={isGenerating}
-                    onClick={() => handleGenerateOutline()}
-                    className="w-full bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
-                  >
-                    <Sparkles size={12} className={activeTask === 'outline' && isGenerating ? 'animate-spin' : ''} />
-                    按建议重新生成大纲
-                  </button>
-                  <button
-                    disabled={isGenerating}
-                    onClick={() => {
-                      const slapContent = skills.find(s => s.key === 'female_slap')?.content || '';
-                      handleGenerateOutline(false, slapContent);
-                    }}
-                    className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
-                  >
-                    <Sparkles size={12} /> 用打脸闭环重新生成
-                  </button>
-                </div>
-              </div>
+                {/* 导出 MD */}
+                <button
+                  disabled={!project.outline}
+                  onClick={() => {
+                    const blob = new Blob([project.outline], { type: 'text/markdown' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `《${project.title || '未命名'}》大纲.md`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  }}
+                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                >
+                  <Download size={10} /> 导出 MD
+                </button>
 
-              {/* 大纲补充 Skill */}
-              <div className="bg-paper-50 border border-rule p-4 space-y-3">
-                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                  <Layers size={13} className="text-accent" /> 补充 Skill
-                </h3>
-                <div className="space-y-1 max-h-40 overflow-y-auto border border-rule p-2 bg-paper">
-                  {skills.filter(s => !['workflow', 'blurb', 'outline_template'].includes(s.key)).map(s => (
-                    <label key={s.key} className="flex items-center gap-2 text-[11px] text-ink cursor-pointer py-0.5">
-                      <input
-                        type="checkbox"
-                        checked={outlineExtraSkillKeys.includes(s.key)}
-                        onChange={(e) => {
-                          setOutlineExtraSkillKeys(e.target.checked
-                            ? [...outlineExtraSkillKeys, s.key]
-                            : outlineExtraSkillKeys.filter((k: string) => k !== s.key));
-                        }}
-                        className="rounded accent-[#9b2d20] shrink-0"
-                      />
-                      <span className="truncate">{s.name}</span>
-                    </label>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-ink-400">
-                  <span>或上传/粘贴临时 Skill：</span>
-                  <label className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 font-bold px-2 py-0.5 cursor-pointer transition">
-                    <FileUp size={10} /> 上传
-                    <input
-                      type="file"
-                      accept=".txt,.md"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        const reader = new FileReader();
-                        reader.onload = (ev) => setOutlineExtraSkillText(ev.target?.result as string || '');
-                        reader.readAsText(file, 'utf-8');
-                        e.target.value = '';
-                      }}
-                    />
-                  </label>
-                </div>
-                <textarea
-                  value={outlineExtraSkillText}
-                  onChange={(e) => setOutlineExtraSkillText(e.target.value)}
-                  rows={3}
-                  className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                  placeholder="粘贴临时 Skill 内容..."
-                />
-              </div>
-
-              {/* 生成备选书名 */}
-              <div className="bg-paper-50 border border-rule p-4 space-y-3">
-                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                  <Type size={13} className="text-accent" /> 备选书名（中英双语）
-                </h3>
-                <textarea
-                  value={titleCustomPrompt}
-                  onChange={e => setTitleCustomPrompt(e.target.value)}
-                  rows={2}
-                  placeholder='可选：自定要求，如"侧重打脸爽、带权谋感、主角是医女"…'
-                  className="w-full bg-paper border border-rule p-2 font-mono text-[10px] text-ink resize-none focus:outline-none focus:border-accent"
-                />
+                {/* 同步章节 */}
                 <button
                   disabled={isGenerating || !project.outline}
-                  onClick={() => handleGenerateTitleCandidates()}
-                  className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
+                  onClick={async () => {
+                    const n = await syncOutlineChaptersToDb(project.outline, projectId);
+                    alert(n > 0 ? `已同步 ${n} 个章节到数据库。` : '未在大纲中找到章节（请确认包含"### 第 X 章："格式）。');
+                  }}
+                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <Sparkles size={12} className={activeTask === 'title' && isGenerating ? 'animate-spin' : ''} />
-                  生成备选书名
+                  <BookOpen size={10} /> 同步章节
                 </button>
-                {renderTaskControl('title', () => handleGenerateTitleCandidates(true))}
-                {(titleOutput || project.titleCandidates) && (
-                  <textarea
-                    readOnly
-                    value={titleOutput || project.titleCandidates || ''}
-                    rows={8}
-                    className="w-full bg-paper border border-rule p-3 font-mono text-ink text-xs focus:outline-none leading-relaxed resize-none"
-                  />
-                )}
-              </div>
 
-            </div>
+                {/* 选择 Skill */}
+                <div className="relative">
+                  <button
+                    onClick={() => setShowOutlineSkillPopover(v => !v)}
+                    className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                  >
+                    <Layers size={10} /> 选择 Skill {showOutlineSkillPopover ? '▴' : '▾'}
+                  </button>
+                  {showOutlineSkillPopover && (
+                    <div className="absolute bottom-full mb-1 left-0 z-20 bg-paper border border-rule shadow-lg p-2 min-w-[200px] space-y-1">
+                      {skills.filter(s => !['workflow', 'blurb', 'outline_template'].includes(s.key)).map(s => (
+                        <label key={s.key} className="flex items-center gap-2 text-[10px] text-ink cursor-pointer py-0.5 hover:bg-paper-100 px-1">
+                          <input
+                            type="checkbox"
+                            checked={outlineExtraSkillKeys.includes(s.key)}
+                            onChange={(e) => {
+                              setOutlineExtraSkillKeys(e.target.checked
+                                ? [...outlineExtraSkillKeys, s.key]
+                                : outlineExtraSkillKeys.filter((k: string) => k !== s.key));
+                            }}
+                            className="accent-[#9b2d20] shrink-0"
+                          />
+                          <span className="truncate">{s.name}</span>
+                        </label>
+                      ))}
+                      <div className="pt-1 border-t border-rule mt-1">
+                        <label className="flex items-center gap-1 text-[10px] text-ink-400 font-bold cursor-pointer hover:bg-paper-100 px-1">
+                          <FileUp size={9} /> 上传临时 Skill
+                          <input
+                            type="file"
+                            accept=".txt,.md"
+                            className="hidden"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (!file) return;
+                              const reader = new FileReader();
+                              reader.onload = (ev) => setOutlineExtraSkillText(ev.target?.result as string || '');
+                              reader.readAsText(file, 'utf-8');
+                              e.target.value = '';
+                              setShowOutlineSkillPopover(false);
+                            }}
+                          />
+                        </label>
+                        {outlineExtraSkillKeys.length > 0 && (
+                          <span className="text-[9px] text-accent font-bold px-1">{outlineExtraSkillKeys.length} 已选</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 上传例文 */}
+                <button
+                  onClick={() => setShowExampleModal(true)}
+                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                >
+                  <FileUp size={10} /> 上传例文{project.rawExample ? ' ✓' : ''}
+                </button>
+
+                {/* 编辑大纲 */}
+                <button
+                  onClick={() => setShowOutlineEditor(v => !v)}
+                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                >
+                  <Edit3 size={10} /> {showOutlineEditor ? '折叠大纲' : '编辑大纲'}
+                </button>
+              </>
+            }
+          />
+
+          {/* ExampleModal */}
+          <ExampleModal
+            isOpen={showExampleModal}
+            onClose={() => setShowExampleModal(false)}
+            rawExample={project.rawExample || ''}
+            onChange={(text) => db.projects.update(projectId, { rawExample: text })}
+            onSave={() => {/* saved via onChange */}}
+          />
         </div>
-      </div>
       )}
-
-      {/* ---------------------------------------------------- */}
       {/* STAGE 2: DRAFTING ROOM */}
       {/* ---------------------------------------------------- */}
       {pipelineTab === 'drafting' && (
@@ -1553,134 +1565,182 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             )}
           </div>
 
-          {/* Core Text Editor Grid */}
-          <div className="xl:col-span-2 space-y-4">
-            {activeChapterId !== null ? (
-              <div className="bg-paper-50 border border-rule p-5 flex flex-col justify-between min-h-[500px] h-[calc(100vh-240px)]">
-                <div className="flex flex-col h-full space-y-4">
-                  {/* Top toolbar */}
-                  <div className="flex flex-col sm:flex-row gap-3 justify-between sm:items-center border-b border-rule pb-3">
-                    <div className="flex items-center gap-2 flex-grow max-w-sm">
-                      <span className="text-[10px] font-mono bg-accent-faint text-accent px-2 py-1 border border-accent/20 shrink-0">
-                        第 {chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1} 章
-                      </span>
-                      <input
-                        type="text"
-                        value={editingTitle}
-                        onChange={(e) => setEditingTitle(e.target.value)}
-                        className="bg-transparent border-b border-transparent hover:border-rule focus:border-accent focus:outline-none text-sm font-bold text-ink w-full py-0.5"
-                        placeholder="章节标题"
-                      />
-                    </div>
-
-                    <div className="flex items-center gap-2 shrink-0">
-                      <button
-                        onClick={handleSaveChapterManual}
-                        className="p-1 px-2 hover:bg-paper-100 text-ink-500 border border-rule text-xs font-semibold flex items-center gap-1 transition"
-                        title="保存草稿"
-                      >
-                        <Save size={12} /> 保存草稿
-                      </button>
-
-                      <button
-                        disabled={isGenerating}
-                        onClick={() => {
-                          const ch = chapters.find(c => c.id === activeChapterId);
-                          if (ch) handleLogicReviewChapter(ch);
-                        }}
-                        className="hover:bg-paper-100 disabled:opacity-50 text-grove border border-rule text-xs px-2.5 py-1.5 flex items-center gap-1.5 transition font-bold"
-                        title="AI 逻辑审查"
-                      >
-                        <FileSearch size={12} className={isGenerating ? 'animate-spin' : ''} />
-                        逻辑审查
-                      </button>
-                      {renderTaskControl('review', () => {
-                        const ch = chapters.find(c => c.id === activeChapterId);
-                        if (ch) handleLogicReviewChapter(ch, true);
-                      })}
-
-                      <button
-                        disabled={isGenerating}
-                        onClick={() => handleGenerateChapterStream()}
-                        className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs px-3.5 py-1.5 flex items-center gap-1.5 transition font-bold"
-                      >
-                        <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
-                        生成正文
-                      </button>
-                      {renderTaskControl('chapter', () => handleGenerateChapterStream(true))}
-                    </div>
-                    {chapterError && (
-                      <div className="text-[11px] text-red-700 bg-red-50 border border-red-200 px-3 py-2 leading-relaxed">
-                        <span className="font-bold">生成失败：</span>{chapterError}
-                        <span className="ml-2 text-ink-400">（请在「阶段模型」中切换为可用模型）</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Dual Grid: Local Chapter Outline Requirements & Main Story Content */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 h-[80%]">
-                    {/* Tiny Outline box for current single chapter */}
-                    <div className="md:col-span-1 bg-paper-50 p-2.5 border border-rule flex flex-col justify-between space-y-2 h-full">
-                      <div className="space-y-1 h-[100%] flex flex-col">
-                        <label className="text-[10px] font-bold text-ink-400 uppercase tracking-wider">
-                          本章大纲要求
-                        </label>
-                        <textarea
-                          value={editingOutline}
-                          onChange={(e) => setEditingOutline(e.target.value)}
-                          className="w-full flex-1 bg-paper-50 border border-rule p-2.5 font-sans text-[11px] text-ink focus:outline-none focus:border-rule-dark leading-relaxed resize-none h-[100%]"
-                          placeholder="将本章大纲片段粘贴在此（可从大纲编辑框复制）..."
-                        />
-                      </div>
-                    </div>
-
-                    {/* Main Core Editor */}
-                    <div className="md:col-span-2 relative h-full flex flex-col">
-                      <div className="absolute top-2 right-2 z-10 flex gap-2">
-                        {editingDraft && (
-                          <>
-                            <button
-                              onClick={() => {
-                                const ch = chapters.find(c => c.id === activeChapterId);
-                                if (ch) handleExportChapterMarkdown(ch);
-                              }}
-                              className="p-1 px-2 bg-paper-100 border border-rule hover:bg-paper text-[10px] text-ink-500 font-bold flex items-center gap-1 transition"
-                              title="导出本章为 MD（去除自检内容）"
-                            >
-                              <Download size={11} /> 导出单章
-                            </button>
-                            <button
-                              onClick={() => handleCopyText(editingDraft)}
-                              className="p-1 px-2 bg-paper-100 border border-rule hover:bg-paper text-[10px] text-ink-500 font-bold flex items-center gap-1 transition"
-                              title="Copy clean narrative"
-                            >
-                              <Copy size={11} /> 复制正文
-                            </button>
-                          </>
-                        )}
-                      </div>
-                      <textarea
-                        value={isGenerating && !editingDraft ? generationOutput : editingDraft}
-                        onChange={(e) => setEditingContent(e.target.value)}
-                        className="w-full flex-1 h-full bg-paper-50 border border-rule p-4 pr-10 font-mono text-xs text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                        placeholder="正文将在此生成..."
-                      />
-                    </div>
-                  </div>
+          {/* ChatPanel area */}
+          <div className="xl:col-span-3 space-y-3">
+            {/* Collapsible chapter outline editor */}
+            {showChapterOutlineEditor && activeChapterId !== null && (
+              <div className="bg-paper-50 border border-rule p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-bold text-ink-400 uppercase tracking-widest">本章大纲要求</label>
+                  <button onClick={() => setShowChapterOutlineEditor(false)} className="text-[10px] text-ink-400 hover:text-ink font-semibold">折叠 ×</button>
                 </div>
-
-                <div className="flex justify-between items-center text-[10px] text-ink-400 mt-2 border-t border-rule pt-2 font-semibold">
-                  <span className="flex items-center gap-1.5">
-                    字数：<strong className="font-mono text-ink">{editingDraft.length}</strong>
-                  </span>
-                  <span>每次重新生成时自动保存版本历史（最多 5 版）。</span>
-                </div>
+                <textarea
+                  value={editingOutline}
+                  onChange={(e) => setEditingOutline(e.target.value)}
+                  rows={5}
+                  className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:outline-none focus:border-accent leading-relaxed resize-none"
+                  placeholder="将本章大纲片段粘贴在此..."
+                />
               </div>
+            )}
+
+            {/* Grease warnings */}
+            {greaseWarnings.length > 0 && (
+              <div className="bg-accent-pale border border-accent/40 p-3 space-y-1.5">
+                <div className="flex items-center gap-2 text-accent text-xs font-bold">
+                  <AlertTriangle size={13} /> 去油警告
+                </div>
+                <ul className="space-y-0.5">
+                  {greaseWarnings.map((warn, i) => (
+                    <li key={i} className="text-[10px] text-ink font-semibold before:content-['•'] before:text-accent before:mr-1">{warn}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Chapter error */}
+            {chapterError && activeTask !== 'chapter' && (
+              <div className="flex items-start gap-2 bg-red-50 border border-red-200 p-2.5 text-[10px] text-red-700">
+                <AlertTriangle size={12} className="mt-0.5 shrink-0" />
+                <span>{chapterError}</span>
+              </div>
+            )}
+
+            {activeChapterId !== null ? (
+              <ChatPanel
+                messages={chapterChatMessages}
+                isStreaming={isGenerating && (activeTask === 'chapter' || activeTask === 'review')}
+                streamingContent={activeTask === 'chapter' ? editingDraft : logicReviewOutput}
+                streamingLabel={activeTask === 'chapter' ? '生成正文中...' : '逻辑审查中...'}
+                onSend={handleChapterChatSend}
+                placeholder="输入重写建议后按 Enter 发送，或点击上方按钮直接生成正文..."
+                toolbar={
+                  <>
+                    {/* 保存草稿 */}
+                    <button
+                      onClick={handleSaveChapterManual}
+                      className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                    >
+                      <Save size={10} /> 保存草稿
+                    </button>
+
+                    {/* 导出单章 */}
+                    <button
+                      onClick={() => {
+                        const ch = chapters.find(c => c.id === activeChapterId);
+                        if (ch) handleExportChapterMarkdown(ch);
+                      }}
+                      className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                    >
+                      <Download size={10} /> 导出单章
+                    </button>
+
+                    {/* 重新生成 */}
+                    <button
+                      disabled={isGenerating}
+                      onClick={() => handleChapterChatSend('')}
+                      className="flex items-center gap-1 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-[10px] font-bold px-2.5 py-1.5 transition"
+                    >
+                      <Sparkles size={10} className={activeTask === 'chapter' && isGenerating ? 'animate-spin' : ''} />
+                      {chapters.find(c => c.id === activeChapterId)?.content ? '重新生成' : '生成正文'}
+                    </button>
+                    {renderTaskControl('chapter', () => handleGenerateChapterStream(true))}
+
+                    {/* 逻辑审查 */}
+                    <button
+                      disabled={isGenerating}
+                      onClick={() => {
+                        const ch = chapters.find(c => c.id === activeChapterId);
+                        if (ch) handleLogicReviewChapter(ch);
+                      }}
+                      className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                    >
+                      <FileSearch size={10} className={activeTask === 'review' && isGenerating ? 'animate-spin' : ''} />
+                      逻辑审查
+                    </button>
+                    {renderTaskControl('review', () => {
+                      const ch = chapters.find(c => c.id === activeChapterId);
+                      if (ch) handleLogicReviewChapter(ch, true);
+                    })}
+
+                    {/* 打脸闭环 */}
+                    <button
+                      disabled={isGenerating}
+                      onClick={() => {
+                        const slapContent = skills.find(s => s.key === 'female_slap')?.content || '';
+                        handleChapterChatSend('按打脸闭环风格重新生成本章', slapContent);
+                      }}
+                      className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                    >
+                      <Sparkles size={10} /> 打脸闭环
+                    </button>
+
+                    {/* 选择 Skill */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowChapterSkillPopover(v => !v)}
+                        className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                      >
+                        <Layers size={10} /> 选择 Skill {showChapterSkillPopover ? '▴' : '▾'}
+                      </button>
+                      {showChapterSkillPopover && (
+                        <div className="absolute bottom-full mb-1 left-0 z-20 bg-paper border border-rule shadow-lg p-2 min-w-[200px] space-y-1">
+                          {skills.filter(s => !['workflow', 'blurb'].includes(s.key)).map(s => (
+                            <label key={s.key} className="flex items-center gap-2 text-[10px] text-ink cursor-pointer py-0.5 hover:bg-paper-100 px-1">
+                              <input
+                                type="checkbox"
+                                checked={chapterExtraSkillKeys.includes(s.key)}
+                                onChange={(e) => {
+                                  setChapterExtraSkillKeys(e.target.checked
+                                    ? [...chapterExtraSkillKeys, s.key]
+                                    : chapterExtraSkillKeys.filter(k => k !== s.key));
+                                }}
+                                className="accent-[#9b2d20] shrink-0"
+                              />
+                              <span className="truncate">{s.name}</span>
+                            </label>
+                          ))}
+                          <div className="pt-1 border-t border-rule mt-1">
+                            <label className="flex items-center gap-1 text-[10px] text-ink-400 font-bold cursor-pointer hover:bg-paper-100 px-1">
+                              <FileUp size={9} /> 上传临时 Skill
+                              <input
+                                type="file"
+                                accept=".txt,.md"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (!file) return;
+                                  const reader = new FileReader();
+                                  reader.onload = (ev) => setChapterExtraSkillText(ev.target?.result as string || '');
+                                  reader.readAsText(file, 'utf-8');
+                                  e.target.value = '';
+                                  setShowChapterSkillPopover(false);
+                                }}
+                              />
+                            </label>
+                            {chapterExtraSkillKeys.length > 0 && (
+                              <span className="text-[9px] text-accent font-bold px-1">{chapterExtraSkillKeys.length} 已选</span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 章节大纲 */}
+                    <button
+                      onClick={() => setShowChapterOutlineEditor(v => !v)}
+                      className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
+                    >
+                      <Edit3 size={10} /> 章节大纲
+                    </button>
+                  </>
+                }
+              />
             ) : (
-              <div className="bg-paper border border-rule border-dashed p-16 text-center space-y-3">
-                <Edit3 className="mx-auto text-ink-300" size={32} />
+              <div className="bg-paper border border-rule border-dashed flex flex-col items-center justify-center text-center space-y-3 h-[calc(100vh-240px)]" style={{ minHeight: 480 }}>
+                <Edit3 className="text-ink-300" size={32} />
                 <h4 className="font-bold text-ink text-sm">请选择章节</h4>
-                <p className="text-ink-400 text-xs max-w-xs mx-auto">从左侧列表选择一个章节，或新建章节开始写作。</p>
+                <p className="text-ink-400 text-xs max-w-xs">从左侧列表选择一个章节，或新建章节开始写作。</p>
                 <button
                   onClick={handleCreateNewChapter}
                   className="border border-rule bg-paper hover:bg-paper-100 text-ink-500 font-semibold px-4 py-1.5 text-xs"
@@ -1689,147 +1749,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 </button>
               </div>
             )}
-          </div>
-
-          {/* Dynamic Reviewer Right Column: Anti-Grease Warning + Logic Reviews */}
-          <div className="xl:col-span-1 space-y-4">
-            {/* 1. Client-Side Anti-Grease Warn Card */}
-            {greaseWarnings.length > 0 && (
-              <div className="bg-accent-pale border border-accent/40 p-4 space-y-2">
-                <div className="flex items-center gap-2 text-accent">
-                  <AlertTriangle size={15} />
-                  <h3 className="text-xs font-bold uppercase tracking-wider">去油警告</h3>
-                </div>
-                <p className="text-[10px] text-accent/80 leading-normal">
-                  正文中检测到典型 AI 套路词句，请对照修改：
-                </p>
-                <ul className="space-y-1">
-                  {greaseWarnings.map((warn, i) => (
-                    <li key={i} className="text-[10px] text-ink font-bold flex items-start gap-1.5 before:content-['•'] before:text-accent" >
-                      {warn}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* AI 逻辑审查报告 */}
-            {(logicReviewOutput || chapters.find(c => c.id === activeChapterId)?.logicCheckLog) && (
-              <div className="bg-grove-light border border-grove/40 p-4 space-y-2">
-                <div className="flex items-center gap-2 text-grove">
-                  <FileSearch size={15} />
-                  <h3 className="text-xs font-bold uppercase tracking-wider">AI 逻辑审查报告</h3>
-                </div>
-                <pre className="text-[10px] text-ink-600 leading-relaxed whitespace-pre-wrap font-sans">
-                  {logicReviewOutput || chapters.find(c => c.id === activeChapterId)?.logicCheckLog}
-                </pre>
-              </div>
-            )}
-
-            {/* 本章重写建议 */}
-            <div className="bg-paper-50 border border-rule p-4 space-y-3">
-              <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                <MessageSquare size={13} className="text-accent" /> 本章重写建议
-              </h3>
-              <textarea
-                value={chapterRegenerationPrompt}
-                onChange={(e) => setChapterRegenerationPrompt(e.target.value)}
-                rows={4}
-                className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                placeholder="输入对本章的修改建议，将作为重写 prompt 注入生成..."
-                disabled={activeChapterId === null}
-              />
-              <div className="flex flex-col gap-2">
-                <button
-                  disabled={activeChapterId === null}
-                  onClick={async () => {
-                    if (activeChapterId === null) return;
-                    await db.chapters.update(activeChapterId, { regenerationPrompt: chapterRegenerationPrompt });
-                    alert('建议已保存。');
-                  }}
-                  className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-semibold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
-                >
-                  <Save size={11} /> 保存建议
-                </button>
-                <button
-                  disabled={isGenerating || activeChapterId === null}
-                  onClick={async () => {
-                    if (activeChapterId === null) return;
-                    await db.chapters.update(activeChapterId, { regenerationPrompt: chapterRegenerationPrompt });
-                    handleGenerateChapterStream();
-                  }}
-                  className="w-full bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
-                >
-                  <Sparkles size={11} className={isGenerating && activeTask === 'chapter' ? 'animate-spin' : ''} /> 按建议重新生成本章
-                </button>
-              </div>
-            </div>
-
-            {/* 本章补充 Skill */}
-            <div className="bg-paper-50 border border-rule p-4 space-y-3">
-              <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                <Layers size={13} className="text-accent" /> 本章补充 Skill
-              </h3>
-              <div className="space-y-1 max-h-40 overflow-y-auto border border-rule p-2 bg-paper">
-                {skills.filter(s => !['workflow', 'blurb'].includes(s.key)).map(s => (
-                  <label key={s.key} className="flex items-center gap-2 text-[11px] text-ink cursor-pointer py-0.5">
-                    <input
-                      type="checkbox"
-                      checked={chapterExtraSkillKeys.includes(s.key)}
-                      onChange={(e) => {
-                        setChapterExtraSkillKeys(e.target.checked
-                          ? [...chapterExtraSkillKeys, s.key]
-                          : chapterExtraSkillKeys.filter(k => k !== s.key));
-                      }}
-                      className="rounded accent-[#9b2d20] shrink-0"
-                    />
-                    <span className="truncate">{s.name}</span>
-                  </label>
-                ))}
-              </div>
-              <div className="flex items-center justify-between text-[10px] text-ink-400">
-                <span>或上传/粘贴临时 Skill（不进入全局库）：</span>
-                <label className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 font-bold px-2 py-0.5 cursor-pointer transition">
-                  <FileUp size={10} /> 上传
-                  <input
-                    type="file"
-                    accept=".txt,.md"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = (ev) => setChapterExtraSkillText(ev.target?.result as string || '');
-                      reader.readAsText(file, 'utf-8');
-                      e.target.value = '';
-                    }}
-                  />
-                </label>
-              </div>
-              <textarea
-                value={chapterExtraSkillText}
-                onChange={(e) => setChapterExtraSkillText(e.target.value)}
-                rows={3}
-                className="w-full bg-paper border border-rule p-2.5 font-mono text-[11px] text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                placeholder="粘贴临时 Skill 内容..."
-                disabled={activeChapterId === null}
-              />
-              <button
-                disabled={activeChapterId === null}
-                onClick={async () => {
-                  if (activeChapterId === null) return;
-                  await db.chapters.update(activeChapterId, {
-                    extraSkillKeys: chapterExtraSkillKeys,
-                    extraSkillText: chapterExtraSkillText,
-                  });
-                  alert('Skill 设置已保存。');
-                }}
-                className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-semibold px-3 py-1.5 flex items-center justify-center gap-1.5 transition"
-              >
-                <Save size={11} /> 保存 Skill 设置
-              </button>
-            </div>
-
           </div>
         </div>
       )}
@@ -1982,6 +1901,23 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           </div>
         </div>
       )}
+      {/* Modals */}
+      <TitleModal
+        isOpen={showTitleModal}
+        onClose={() => setShowTitleModal(false)}
+        currentTitle={project?.title || ''}
+        titleCandidates={titleOutput || project?.titleCandidates || ''}
+        titleCustomPrompt={titleCustomPrompt}
+        isGenerating={isGenerating && activeTask === 'title'}
+        onSetCustomPrompt={setTitleCustomPrompt}
+        onGenerate={handleGenerateTitleCandidates}
+        onApplyTitle={async (title) => {
+          const t = title.trim() || '未命名项目';
+          await db.projects.update(projectId, { title: t });
+          setEditingProjectTitle(t);
+          setShowTitleModal(false);
+        }}
+      />
     </div>
   );
 }
