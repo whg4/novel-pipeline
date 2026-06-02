@@ -11,7 +11,7 @@ import {
 import {
   Sparkles, BookOpen, Layers, Edit3, Plus, Save, Copy, FileUp,
   AlertTriangle, RefreshCw, Play, Pause, FileSearch, ImageIcon, Download,
-  PenLine
+  PenLine, Eye, X
 } from 'lucide-react';
 import ChatPanel from '../components/ChatPanel';
 import TitleModal from '../components/TitleModal';
@@ -249,6 +249,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [showChapterOutlineEditor, setShowChapterOutlineEditor] = useState(false);
   const [showOutlineSkillPopover, setShowOutlineSkillPopover] = useState(false);
   const [showChapterSkillPopover, setShowChapterSkillPopover] = useState(false);
+  const [viewingChapter, setViewingChapter] = useState<{ title: string; content: string } | null>(null);
 
   // Load first chapter automatically on startup if none selected
   useEffect(() => {
@@ -1200,6 +1201,21 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     await handleGenerateChapterStream(false, userText || undefined, extraSkillTextOverride);
   };
 
+  const handleClearOutlineChat = async () => {
+    await db.chatMessages.where('[projectId+scope]').equals([projectId, 'outline']).delete();
+  };
+
+  const handleClearChapterChat = async () => {
+    if (activeChapterId === null) return;
+    await db.chatMessages.where('[projectId+scope+chapterId]').equals([projectId, 'chapter', activeChapterId]).delete();
+  };
+
+  const handleUseReviewSuggestion = (reviewContent: string) => {
+    const prompt = `根据以上逻辑审查建议重新生成本章（建议内容已附在上下文中）`;
+    handleChapterChatSend(prompt);
+    void reviewContent; // reviewContent is already in chat history context
+  };
+
   return (
     <div className="space-y-6">
       {/* 项目标题与导航 */}
@@ -1358,6 +1374,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             streamingContent={activeTask === 'outline' ? generationOutput : outlineReviewOutput}
             streamingLabel={activeTask === 'outline' ? (outlineGenerationStatus || '生成大纲中...') : '审查大纲中...'}
             onSend={handleOutlineChatSend}
+            onClear={handleClearOutlineChat}
             disabled={!project}
             placeholder="输入修改意见后按 Enter 发送，或点击上方按钮直接生成大纲..."
             toolbar={
@@ -1537,15 +1554,29 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                     }`}
                   >
                     <span>第 {ch.chapterNumber} 章: {ch.title.split(':').pop()?.trim()}</span>
-                    {ch.content ? (
-                      <span className="text-[9px] px-1.5 py-0.5 bg-grove-light font-bold border border-grove/30 text-grove">
-                        {ch.content.length} words
-                      </span>
-                    ) : (
-                      <span className="text-[9px] px-1.5 py-0.5 bg-paper-100 font-bold text-ink-400 border border-rule">
-                        empty
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {ch.content && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewingChapter({ title: ch.title || `第 ${ch.chapterNumber} 章`, content: ch.content! });
+                          }}
+                          title="查看原文"
+                          className="p-0.5 text-ink-400 hover:text-accent transition"
+                        >
+                          <Eye size={11} />
+                        </button>
+                      )}
+                      {ch.content ? (
+                        <span className="text-[9px] px-1.5 py-0.5 bg-grove-light font-bold border border-grove/30 text-grove">
+                          {ch.content.length} words
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.5 bg-paper-100 font-bold text-ink-400 border border-rule">
+                          empty
+                        </span>
+                      )}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -1613,6 +1644,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 streamingContent={activeTask === 'chapter' ? editingDraft : logicReviewOutput}
                 streamingLabel={activeTask === 'chapter' ? '生成正文中...' : '逻辑审查中...'}
                 onSend={handleChapterChatSend}
+                onClear={handleClearChapterChat}
+                onUseReviewSuggestion={handleUseReviewSuggestion}
                 placeholder="输入重写建议后按 Enter 发送，或点击上方按钮直接生成正文..."
                 toolbar={
                   <>
@@ -1897,6 +1930,42 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   <span className="text-[10px] font-semibold block">填写提示词后点击"生成封面图片"</span>
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Chapter content viewer modal */}
+      {viewingChapter && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setViewingChapter(null)}
+        >
+          <div
+            className="bg-paper border border-rule shadow-xl flex flex-col w-full max-w-2xl mx-4" style={{ maxHeight: '80vh' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-rule shrink-0">
+              <h2 className="text-sm font-black font-display text-ink">{viewingChapter.title}</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => navigator.clipboard.writeText(viewingChapter.content).then(() => alert('已复制！'))}
+                  className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-ink border border-rule px-2 py-1 bg-paper hover:bg-paper-100 transition"
+                >
+                  <Copy size={10} /> 复制
+                </button>
+                <button
+                  onClick={() => setViewingChapter(null)}
+                  className="text-ink-400 hover:text-ink p-1 transition"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              <pre className="font-mono text-xs text-ink leading-relaxed whitespace-pre-wrap break-words">{viewingChapter.content}</pre>
+            </div>
+            <div className="px-4 py-2 border-t border-rule shrink-0">
+              <span className="text-[10px] text-ink-400">{viewingChapter.content.length} 字符</span>
             </div>
           </div>
         </div>
