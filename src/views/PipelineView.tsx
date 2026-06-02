@@ -16,6 +16,7 @@ import {
 import ChatPanel from '../components/ChatPanel';
 import TitleModal from '../components/TitleModal';
 import ExampleModal from '../components/ExampleModal';
+import OutlineEditorModal from '../components/OutlineEditorModal';
 
 interface PipelineViewProps {
   projectId: number;
@@ -1346,26 +1347,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       {/* ---------------------------------------------------- */}
       {pipelineTab === 'outline' && (
         <div className="space-y-4">
-          {/* Collapsible raw outline editor */}
-          {showOutlineEditor && (
-            <div className="bg-paper-50 border border-rule p-4 space-y-2">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-ink flex items-center gap-1.5">
-                  <Edit3 size={13} className="text-accent" /> 原始大纲编辑
-                </h3>
-                <button onClick={() => setShowOutlineEditor(false)} className="text-[10px] text-ink-400 hover:text-ink font-semibold">
-                  折叠 ×
-                </button>
-              </div>
-              <textarea
-                value={splitOutlineSections(project.outline).main}
-                onChange={(e) => handleUpdateOutlineManual(e.target.value)}
-                rows={12}
-                className="w-full bg-paper border border-rule p-3 font-mono text-xs text-ink focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                placeholder="直接编辑大纲正文..."
-              />
-            </div>
-          )}
+          {/* OutlineEditorModal */}
+          <OutlineEditorModal
+            isOpen={showOutlineEditor}
+            onClose={() => setShowOutlineEditor(false)}
+            outline={splitOutlineSections(project.outline || '').main}
+            onSave={handleUpdateOutlineManual}
+          />
 
           {/* ChatPanel */}
           <ChatPanel
@@ -1503,10 +1491,10 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
                 {/* 编辑大纲 */}
                 <button
-                  onClick={() => setShowOutlineEditor(v => !v)}
+                  onClick={() => setShowOutlineEditor(true)}
                   className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <Edit3 size={10} /> {showOutlineEditor ? '折叠大纲' : '编辑大纲'}
+                  <Edit3 size={10} /> 编辑大纲
                 </button>
               </>
             }

@@ -6,10 +6,9 @@ import { Plus, BookOpen, Clock, Tag, History, Trash2, Award, FileUp } from 'luci
 
 interface DashboardViewProps {
   onSelectProject: (projectId: number) => void;
-  setActiveTab: (tab: string) => void;
 }
 
-export default function DashboardView({ onSelectProject, setActiveTab }: DashboardViewProps) {
+export default function DashboardView({ onSelectProject }: DashboardViewProps) {
   const projects = useLiveQuery(() => db.projects.toArray()) || [];
   const chapters = useLiveQuery(() => db.chapters.toArray()) || [];
 
@@ -61,7 +60,6 @@ export default function DashboardView({ onSelectProject, setActiveTab }: Dashboa
     
     if (id) {
       onSelectProject(Number(id));
-      setActiveTab('pipeline');
     }
   };
 
@@ -122,7 +120,6 @@ export default function DashboardView({ onSelectProject, setActiveTab }: Dashboa
                   key={project.id}
                   onClick={() => {
                     onSelectProject(project.id!);
-                    setActiveTab('pipeline');
                   }}
                   className="bg-paper hover:bg-paper-50 p-5 cursor-pointer group transition flex flex-col justify-between min-h-[160px]"
                 >
