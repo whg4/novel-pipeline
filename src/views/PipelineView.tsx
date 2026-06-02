@@ -1335,46 +1335,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                 </div>
               </div>
             </div>
-
-            {/* 四、自检清单 & 五、可选附录 */}
-            {(() => {
-              const { checklist, appendix } = splitOutlineSections(project.outline);
-              if (!checklist && !appendix) return null;
-              return (
-                <div className="space-y-2">
-                  {checklist && (
-                    <details className="bg-paper-50 border border-rule group">
-                      <summary className="flex items-center justify-between px-4 py-3 cursor-pointer select-none text-xs font-bold text-ink list-none">
-                        <span className="flex items-center gap-1.5">
-                          <FileSearch size={13} className="text-grove shrink-0" />
-                          四、大纲交付前自检清单
-                        </span>
-                        <span className="text-ink-400 font-normal text-[10px] group-open:hidden">▶ 展开</span>
-                        <span className="text-ink-400 font-normal text-[10px] hidden group-open:inline">▼ 收起</span>
-                      </summary>
-                      <div className="px-4 pb-4 pt-1">
-                        <pre className="whitespace-pre-wrap font-mono text-[10px] text-ink leading-relaxed bg-paper border border-rule p-3 max-h-[60vh] overflow-y-auto">{checklist}</pre>
-                      </div>
-                    </details>
-                  )}
-                  {appendix && (
-                    <details className="bg-paper-50 border border-rule group">
-                      <summary className="flex items-center justify-between px-4 py-3 cursor-pointer select-none text-xs font-bold text-ink list-none">
-                        <span className="flex items-center gap-1.5">
-                          <Layers size={13} className="text-accent shrink-0" />
-                          五、可选附录
-                        </span>
-                        <span className="text-ink-400 font-normal text-[10px] group-open:hidden">▶ 展开</span>
-                        <span className="text-ink-400 font-normal text-[10px] hidden group-open:inline">▼ 收起</span>
-                      </summary>
-                      <div className="px-4 pb-4 pt-1">
-                        <pre className="whitespace-pre-wrap font-mono text-[10px] text-ink leading-relaxed bg-paper border border-rule p-3 max-h-[40vh] overflow-y-auto">{appendix}</pre>
-                      </div>
-                    </details>
-                  )}
-                </div>
-              );
-            })()}
           </div>
 
           {/* Right Panel: 大纲审查 & 反馈 */}
