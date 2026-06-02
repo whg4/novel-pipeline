@@ -122,6 +122,16 @@ export function useChapterDrafting(
     }
   };
 
+  const handleClearAllChapters = async () => {
+    const ids = chapters.map(c => c.id).filter(Boolean) as number[];
+    await Promise.all(ids.map(id => db.chapters.delete(id)));
+    setActiveChapterId(null);
+    setEditingTitle('');
+    setEditingOutline('');
+    setEditingContent('');
+    setChapterRegenerationPrompt('');
+  };
+
   const handleSaveChapterManual = async () => {
     if (activeChapterId === null) return;
     const ch = chapters.find(c => c.id === activeChapterId);
@@ -311,6 +321,7 @@ export function useChapterDrafting(
     handleSelectChapter,
     handleCreateNewChapter,
     handleDeleteChapter,
+    handleClearAllChapters,
     handleSaveChapterManual,
     handleGenerateChapterStream,
     handleExportChapterMarkdown,

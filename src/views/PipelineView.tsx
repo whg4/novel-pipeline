@@ -270,6 +270,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           handleSelectChapter={chapterDraftHook.handleSelectChapter}
           handleCreateNewChapter={chapterDraftHook.handleCreateNewChapter}
           handleDeleteChapter={chapterDraftHook.handleDeleteChapter}
+          handleClearAllChapters={chapterDraftHook.handleClearAllChapters}
           handleSaveChapterManual={chapterDraftHook.handleSaveChapterManual}
           handleGenerateChapterStream={chapterDraftHook.handleGenerateChapterStream}
           handleExportChapterMarkdown={chapterDraftHook.handleExportChapterMarkdown}

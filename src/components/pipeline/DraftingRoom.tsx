@@ -43,6 +43,7 @@ interface DraftingRoomProps {
   handleSelectChapter: (ch: Chapter) => void;
   handleCreateNewChapter: () => void;
   handleDeleteChapter: (chapterId: number) => void;
+  handleClearAllChapters: () => void;
   handleSaveChapterManual: () => void;
   handleGenerateChapterStream: (resume?: boolean, promptOverride?: string, extraSkillTextOverride?: string) => void;
   handleExportChapterMarkdown: (ch: Chapter) => void;
@@ -79,6 +80,7 @@ export default function DraftingRoom({
   handleSelectChapter,
   handleCreateNewChapter,
   handleDeleteChapter,
+  handleClearAllChapters,
   handleSaveChapterManual,
   handleGenerateChapterStream,
   handleExportChapterMarkdown,
@@ -200,6 +202,24 @@ export default function DraftingRoom({
               onClick={handleCreateNewChapter}
               title="新建章节"
             />
+            {chapters.length > 0 && (
+              <Popconfirm
+                title="清空章节"
+                description={`确认清空全部 ${chapters.length} 个章节？此操作不可撤销。`}
+                onConfirm={handleClearAllChapters}
+                okText="清空"
+                cancelText="取消"
+                okButtonProps={{ danger: true }}
+              >
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<DeleteOutlined />}
+                  title="清空全部章节"
+                  danger
+                />
+              </Popconfirm>
+            )}
           </div>
 
           <div className="space-y-1">
