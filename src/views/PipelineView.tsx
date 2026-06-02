@@ -1258,7 +1258,16 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             <Download size={12} /> 导出小说
           </button>
 
-          {/* 一键全自动按钮已屏蔽 */}
+          {/* 一键全自动 */}
+          {!isAutoRunning && !pausedTask && (
+            <button
+              onClick={() => handleRunAutoPipeline(false)}
+              disabled={isGenerating}
+              className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 transition"
+            >
+              <Play size={12} /> 一键全自动
+            </button>
+          )}
 
           {/* 标签切换 */}
           <div className="flex border-b border-rule">
