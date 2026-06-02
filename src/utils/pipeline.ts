@@ -71,7 +71,7 @@ export function parseOutlineChapters(
   });
 }
 
-// 将解析结果写入数据库（已存在的章节不覆盖正文内容）
+// 将解析结果写入数据库（已存在的章节同步 title + outlineSection，不覆盖 content）
 export async function syncOutlineChaptersToDb(outline: string, projectId: number): Promise<number> {
   const parsed = parseOutlineChapters(outline);
   if (parsed.length === 0) return 0;
@@ -91,8 +91,17 @@ export async function syncOutlineChaptersToDb(outline: string, projectId: number
         versionHistory: [],
         lastEdited: Date.now(),
       });
-    } else if (!existing.outlineSection || existing.outlineSection.length < 20) {
-      await db.chapters.update(existing.id!, { outlineSection: p.outlineSection });
+    } else {
+      // 已存在 — 始终同步 title 和 outlineSection，保留 content/versionHistory 等
+      const newTitle = `第 ${p.chapterNumber} 章：${p.title}`;
+      const needsTitleUpdate = existing.title !== newTitle;
+      const needsOutlineUpdate = existing.outlineSection !== p.outlineSection;
+      if (needsTitleUpdate || needsOutlineUpdate) {
+        const patch: Partial<Pick<typeof existing, 'title' | 'outlineSection' | 'lastEdited'>> = { lastEdited: Date.now() };
+        if (needsTitleUpdate) patch.title = newTitle;
+        if (needsOutlineUpdate) patch.outlineSection = p.outlineSection;
+        await db.chapters.update(existing.id!, patch);
+      }
     }
   }
   return parsed.length;

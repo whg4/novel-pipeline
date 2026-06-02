@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { Project, Chapter, Skill, ChatMessage } from '../../types';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
-import { Button, Space, Popover, Checkbox, Modal, Alert, Typography } from 'antd';
+import { Button, Space, Popover, Checkbox, Modal, Alert, Typography, Popconfirm } from 'antd';
 import {
   BookOutlined,
   EditOutlined,
@@ -15,6 +15,7 @@ import {
   AppstoreOutlined,
   EyeOutlined,
   CopyOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import ChatPanel from '../ChatPanel';
 import { db } from '../../db';
@@ -41,6 +42,7 @@ interface DraftingRoomProps {
   viewingChapter: { title: string; content: string } | null;
   handleSelectChapter: (ch: Chapter) => void;
   handleCreateNewChapter: () => void;
+  handleDeleteChapter: (chapterId: number) => void;
   handleSaveChapterManual: () => void;
   handleGenerateChapterStream: (resume?: boolean, promptOverride?: string, extraSkillTextOverride?: string) => void;
   handleExportChapterMarkdown: (ch: Chapter) => void;
@@ -76,6 +78,7 @@ export default function DraftingRoom({
   viewingChapter,
   handleSelectChapter,
   handleCreateNewChapter,
+  handleDeleteChapter,
   handleSaveChapterManual,
   handleGenerateChapterStream,
   handleExportChapterMarkdown,
@@ -230,6 +233,23 @@ export default function DraftingRoom({
                       style={{ padding: 0, minWidth: 'auto', height: 'auto' }}
                     />
                   )}
+                  <Popconfirm
+                    title="删除章节"
+                    description={`确认删除「第 ${ch.chapterNumber} 章」？此操作不可撤销。`}
+                    onConfirm={() => handleDeleteChapter(ch.id!)}
+                    okText="删除"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<DeleteOutlined style={{ fontSize: 11 }} />}
+                      onClick={(e) => e.stopPropagation()}
+                      title="删除章节"
+                      style={{ padding: 0, minWidth: 'auto', height: 'auto', color: '#888888' }}
+                    />
+                  </Popconfirm>
                   {ch.content ? (
                     <span
                       style={{

@@ -262,22 +262,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setChapterRegenerationPrompt(ch.regenerationPrompt || '');
   };
 
-  // Shared renderTaskControl — 暂停已由 Sender onCancel 处理，此处只渲染 Resume 按钮
-  const renderTaskControl: TaskControlRender = (task, onResume) => {
-    if (pausedTask === task) {
-      return (
-        <button
-          type="button"
-          onClick={onResume}
-          className="bg-black hover:bg-[#333] text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
-        >
-          <Play size={12} /> 继续
-        </button>
-      );
-    }
-
-    return null;
-  };
+  // Shared renderTaskControl — 暂停/继续均由 Sender onCancel 和 toolbar 触发
+  const renderTaskControl: TaskControlRender = () => null;
 
   // ----------------------------------------------------
   // ENGINE 4: COVER IMAGE GENERATION (gpt-image-2)
@@ -499,6 +485,17 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setEditingOutline('');
     setEditingContent('');
     setChapterRegenerationPrompt('');
+  };
+
+  const handleDeleteChapter = async (chapterId: number) => {
+    await db.chapters.delete(chapterId);
+    if (activeChapterId === chapterId) {
+      setActiveChapterId(null);
+      setEditingTitle('');
+      setEditingOutline('');
+      setEditingContent('');
+      setChapterRegenerationPrompt('');
+    }
   };
 
   const handleSaveChapterManual = async () => {
@@ -1197,6 +1194,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           viewingChapter={viewingChapter}
           handleSelectChapter={handleSelectChapter}
           handleCreateNewChapter={handleCreateNewChapter}
+          handleDeleteChapter={handleDeleteChapter}
           handleSaveChapterManual={handleSaveChapterManual}
           handleGenerateChapterStream={handleGenerateChapterStream}
           handleExportChapterMarkdown={handleExportChapterMarkdown}
