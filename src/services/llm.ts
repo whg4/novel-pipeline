@@ -163,15 +163,21 @@ export function saveStageAssignments(assignments: StageAssignments) {
 
 type StageModelOverrides = Partial<Record<StageRole, string>>;
 
+// 默认阶段模型覆盖（用户可在「阶段模型」页面修改）
+const DEFAULT_STAGE_MODEL_OVERRIDES: StageModelOverrides = {
+  chapter: 'gemini-3.1-pro',
+};
+
 export function getStageModelOverrides(): StageModelOverrides {
   const json = localStorage.getItem(STAGE_MODEL_OVERRIDES_KEY);
   if (json) {
     try {
-      return JSON.parse(json) as StageModelOverrides;
+      return { ...DEFAULT_STAGE_MODEL_OVERRIDES, ...JSON.parse(json) as StageModelOverrides };
     } catch {
-      return {};
+      return DEFAULT_STAGE_MODEL_OVERRIDES;
     }
   }
+  return { ...DEFAULT_STAGE_MODEL_OVERRIDES };
   return {};
 }
 
