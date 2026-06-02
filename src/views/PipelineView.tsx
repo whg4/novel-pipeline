@@ -8,6 +8,7 @@ import {
   compileLogicReviewPrompt, compileTitlePrompt, compileCoverPrompt,
   LLM_PAUSED_ERROR
 } from '../services/llm';
+import { renderMarkdown } from '../utils/markdown';
 import {
   Sparkles, BookOpen, Layers, Edit3, Plus, Save, Copy, FileUp,
   AlertTriangle, RefreshCw, Play, Pause, FileSearch, ImageIcon, Download,
@@ -1780,29 +1781,31 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                     <Sparkles size={15} className="text-accent" /> 爆款简介（导语）
                   </h3>
                   <button
-                    disabled={isGenerating}
+                    disabled={activeTask === 'marketing' || isAutoRunning}
                     onClick={() => handleGenerateMarketingKit()}
                     className="bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-xs font-bold px-3.5 py-1.5 flex items-center gap-1.5 transition"
                   >
-                    <Sparkles size={12} className={isGenerating ? 'animate-spin' : ''} />
+                    <Sparkles size={12} className={activeTask === 'marketing' ? 'animate-spin' : ''} />
                     一键生成推广素材
                   </button>
                   {renderTaskControl('marketing', () => handleGenerateMarketingKit(true))}
                 </div>
 
                 <div className="flex-1">
-                  {isGenerating && !blurbsOutput ? (
+                  {activeTask === 'marketing' && !blurbsOutput ? (
                     <div className="flex flex-col items-center justify-center py-20 text-ink-400 space-y-2">
                       <RefreshCw size={24} className="animate-spin text-ink-300" />
                       <p className="text-xs">正在生成...</p>
                     </div>
-                  ) : (
-                    <textarea
-                      readOnly
-                      value={blurbsOutput}
-                      className="w-full h-[320px] bg-paper border border-rule p-4 font-mono text-ink text-xs focus:ring-1 focus:ring-accent focus:outline-none leading-relaxed resize-none"
-                      placeholder="点击“一键生成推广素材”后，此处将生成 3 个风格各异的爆款简介..."
+                  ) : blurbsOutput ? (
+                    <div
+                      className="w-full h-[320px] overflow-y-auto bg-paper border border-rule p-4 text-ink text-xs leading-relaxed prose-sm"
+                      dangerouslySetInnerHTML={renderMarkdown(blurbsOutput)}
                     />
+                  ) : (
+                    <div className="w-full h-[320px] bg-paper border border-rule p-4 text-ink-400 text-xs flex items-center justify-center">
+                      点击“一键生成推广素材”后，此处将生成 3 个风格各异的爆款简介...
+                    </div>
                   )}
                 </div>
               </div>
