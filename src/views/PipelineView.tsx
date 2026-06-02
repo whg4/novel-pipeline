@@ -1901,7 +1901,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
                   />
                   <a
                     href={coverImageUrl}
-                    download="novel-cover.png"
+                    download={`${sanitizeMarkdownFileName(project.title || '小说')}-封面.png`}
                     className="w-full border border-rule bg-paper hover:bg-paper-100 text-ink text-center font-bold text-xs py-2 flex items-center justify-center gap-1.5 transition"
                   >
                     <Download size={12} /> 下载封面图片
