@@ -29,6 +29,13 @@ export class NovelDatabase extends Dexie {
       skills: 'key, name, category',
       chatMessages: '++id, [projectId+scope], [projectId+scope+chapterId], createdAt',
     });
+    // v3: Project 新增可选字段 storyMemory（JSON blob，无需变更 store 定义）
+    this.version(3).stores({
+      projects: '++id, title, genre, createdAt',
+      chapters: '++id, projectId, chapterNumber, isCompleted, lastEdited',
+      skills: 'key, name, category',
+      chatMessages: '++id, [projectId+scope], [projectId+scope+chapterId], createdAt',
+    });
   }
 }
 

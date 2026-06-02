@@ -36,6 +36,7 @@ interface OutlineStudioProps {
   handleReviewOutline: (resume?: boolean) => void;
   handleOutlineChatSend: (userText: string) => void;
   handleClearOutlineChat: () => void;
+  handleUseOutlineReviewSuggestion?: (reviewContent: string) => void;
   onPause: () => void;
   renderTaskControl: TaskControlRender;
   syncOutlineChaptersToDb: (outline: string, projectId: number) => Promise<number>;
@@ -64,6 +65,7 @@ export default function OutlineStudio({
   handleReviewOutline,
   handleOutlineChatSend,
   handleClearOutlineChat,
+  handleUseOutlineReviewSuggestion,
   onPause,
   renderTaskControl,
   syncOutlineChaptersToDb,
@@ -171,6 +173,7 @@ export default function OutlineStudio({
         onSend={handleOutlineChatSend}
         onClear={handleClearOutlineChat}
         onPause={onPause}
+        onUseReviewSuggestion={handleUseOutlineReviewSuggestion}
         disabled={!project}
         placeholder="输入修改意见后按 Enter 发送，或点击上方按钮直接生成大纲..."
         toolbar={

@@ -51,15 +51,56 @@ export function sanitizeMarkdownFileName(name: string): string {
     .slice(0, 80) || '小说正文';
 }
 
-// 从大纲文本解析章节（格式：### 第 X 章：标题 或 ### 第X章:标题）
+/**
+ * 中文数字转阿拉伯数字
+ * 支持：一二三四五六七八九十百 单字和组合（如 十二、二十三、一百）
+ */
+function chineseToArabic(num: string): number {
+  const map: Record<string, number> = {
+    '零': 0, '一': 1, '二': 2, '三': 3, '四': 4,
+    '五': 5, '六': 6, '七': 7, '八': 8, '九': 9,
+    '十': 10, '百': 100,
+  };
+
+  // 纯数字情况
+  if (/^\d+$/.test(num)) return parseInt(num, 10);
+
+  // 单字情况
+  if (num.length === 1 && map[num] !== undefined) return map[num];
+
+  // 复合中文数字解析（简化处理：十X, X十, X十X, X百X十X）
+  let result = 0;
+  let current = 0;
+  for (const char of num) {
+    const val = map[char];
+    if (val === undefined) continue;
+    if (val === 10) {
+      result += (current || 1) * 10;
+      current = 0;
+    } else if (val === 100) {
+      result += (current || 1) * 100;
+      current = 0;
+    } else {
+      current = val;
+    }
+  }
+  return result + current;
+}
+
+// 从大纲文本解析章节
+// 支持格式：### 第 1 章：标题、## 第一章：标题、#### 第三章-标题 等
 export function parseOutlineChapters(
   outline: string
 ): { chapterNumber: number; title: string; outlineSection: string }[] {
-  const pattern = /###\s*第\s*(\d+)\s*章[：:]\s*([^\n]+)/g;
+  // 支持 ## ~ #### 标题层级，中文数字或阿拉伯数字，多种分隔符
+  const pattern = /(#{2,4})\s*第\s*(\d+|[一二三四五六七八九十百]+)\s*章[：:\-\s]\s*([^\n]+)/g;
   const positions: { num: number; title: string; start: number }[] = [];
   let match;
   while ((match = pattern.exec(outline)) !== null) {
-    positions.push({ num: parseInt(match[1], 10), title: match[2].trim(), start: match.index });
+    const num = chineseToArabic(match[2]);
+    if (num > 0) {
+      positions.push({ num, title: match[3].trim(), start: match.index });
+    }
   }
   return positions.map((pos, i) => {
     const end = i + 1 < positions.length ? positions[i + 1].start : outline.length;

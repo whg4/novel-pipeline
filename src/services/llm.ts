@@ -9,6 +9,8 @@ import {
   StageAssignments,
 } from '../types';
 import { createConfigForProvider, getProviderPreset, normalizeLegacyProvider, normalizeModelForProvider } from './providers';
+import { retryWithBackoff } from '../utils/retryWithBackoff';
+import { estimateTokens, trimPromptToFit } from '../utils/tokenEstimator';
 
 const STORAGE_KEY = 'novel_pipeline_api_config'; // 旧版单一全局配置（用于迁移）
 const PROVIDER_CONFIGS_KEY = 'novel_pipeline_provider_configs'; // 每供应商独立配置
@@ -38,6 +40,19 @@ export interface OutlineChecklistPromptItem {
   key: OutlineChecklistKey;
   title: string;
 }
+
+export const OUTLINE_CHECKLIST_ITEMS: OutlineChecklistPromptItem[] = [
+  { key: 'a_rhythm', title: '节奏对齐（与参考原文分镜/事件密度一一对应）' },
+  { key: 'b_no_jargon', title: '无术语注解（不出现括号内解释、专业词汇说明）' },
+  { key: 'c_differences', title: '差异标注（与参考原文的替换点明确标记）' },
+  { key: 'd_payback', title: '伏笔回收（每个伏笔有明确回收章节）' },
+  { key: 'e_motives', title: '角色动机一致（无突兀行为转变）' },
+  { key: 'f_logic_time', title: '时间线逻辑（无时间矛盾）' },
+  { key: 'g_transition', title: '章节衔接（末尾钩子→下一章开头无缝）' },
+  { key: 'h_item_consistency', title: '道具一致性（获取/使用/消失有闭环）' },
+  { key: 'i_no_pose', title: '无上帝视角（不出现"他不知道的是"等越界叙述）' },
+  { key: 'j_cliffhangers', title: '章末悬念（每章结尾有钩子）' },
+];
 
 function normalizeConfig(input?: Partial<APIConfig> | null): APIConfig {
   if (!input) return DEFAULT_CONFIG;
@@ -328,6 +343,32 @@ async function handleResponse(
     }
   }
 
+  /**
+   * 带重试的 fetch 封装
+   * 仅在网络层失败（429/500/502/503）时重试，不重试鉴权错误或用户暂停
+   */
+  async function retryFetch(
+    url: string,
+    init: RequestInit,
+    options?: LLMStreamOptions,
+  ): Promise<Response> {
+    return retryWithBackoff(
+      async () => {
+        const response = await fetch(url, init);
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(`接口请求失败（${response.status}）：${text || response.statusText}`);
+        }
+        return response;
+      },
+      {
+        maxRetries: 3,
+        baseDelayMs: 1000,
+        signal: options?.signal,
+      },
+    );
+  }
+
   function isAbortError(error: unknown): boolean {
     return error instanceof DOMException && error.name === 'AbortError';
   }
@@ -340,27 +381,23 @@ async function runOpenAICompatibleStream(
   options?: LLMStreamOptions,
 ): Promise<string> {
   const url = buildUrl(config.baseUrl, '/chat/completions');
-
-  const response = await fetch(url, {
-    method: 'POST',
-    signal: options?.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${config.apiKey}`,
-      'X-Title': 'Novel Pipeline Studio',
-      ...(config.extraHeaders ?? {}),
-    },
-    body: JSON.stringify({
-      model: config.model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: config.temperature,
-      stream: true,
-    }),
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${config.apiKey}`,
+    'X-Title': 'Novel Pipeline Studio',
+    ...(config.extraHeaders ?? {}),
+  };
+  const body = JSON.stringify({
+    model: config.model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    temperature: config.temperature,
+    stream: true,
   });
 
+  const response = await retryFetch(url, { method: 'POST', signal: options?.signal, headers, body }, options);
   return handleResponse(response, onToken, extractOpenAIText, options);
 }
 
@@ -372,29 +409,25 @@ async function runAnthropicMessagesStream(
   options?: LLMStreamOptions,
 ): Promise<string> {
   const url = buildUrl(config.baseUrl, '/messages');
-
-  const response = await fetch(url, {
-    method: 'POST',
-    signal: options?.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': config.apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-      ...(config.extraHeaders ?? {}),
-    },
-    body: JSON.stringify({
-      model: config.model,
-      max_tokens: 65536,
-      temperature: config.temperature,
-      system: systemPrompt,
-      messages: [
-        { role: 'user', content: userPrompt },
-      ],
-      stream: true,
-    }),
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-api-key': config.apiKey,
+    'anthropic-version': '2023-06-01',
+    'anthropic-dangerous-direct-browser-access': 'true',
+    ...(config.extraHeaders ?? {}),
+  };
+  const body = JSON.stringify({
+    model: config.model,
+    max_tokens: 65536,
+    temperature: config.temperature,
+    system: systemPrompt,
+    messages: [
+      { role: 'user', content: userPrompt },
+    ],
+    stream: true,
   });
 
+  const response = await retryFetch(url, { method: 'POST', signal: options?.signal, headers, body }, options);
   return handleResponse(response, onToken, extractAnthropicText, options);
 }
 
@@ -414,41 +447,38 @@ async function runGeminiStream(
     assertStreamActive(options);
     const model = encodeURIComponent(modelName);
     const url = `${baseUrl}/models/${model}:streamGenerateContent?key=${encodeURIComponent(config.apiKey)}&alt=sse`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      signal: options?.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(config.extraHeaders ?? {}),
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(config.extraHeaders ?? {}),
+    };
+    const body = JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: systemPrompt }],
       },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: systemPrompt }],
+      contents: [
+        {
+          role: 'user',
+          parts: [{ text: userPrompt }],
         },
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: userPrompt }],
-          },
-        ],
-        generationConfig: {
-          temperature: config.temperature,
-        },
-      }),
+      ],
+      generationConfig: {
+        temperature: config.temperature,
+      },
     });
 
-    if (response.ok) {
-      return handleResponse(response, onToken, extractGeminiText, options);
+    let response: Response;
+    try {
+      response = await retryFetch(url, { method: 'POST', signal: options?.signal, headers, body }, options);
+    } catch (e: any) {
+      // 404 on model name is not retryable — fall through to next model
+      if (/404/.test(e.message) && /not found|NOT_FOUND|not supported/i.test(e.message)) {
+        modelNotFoundError = e.message;
+        continue;
+      }
+      throw e;
     }
 
-    const errorText = await response.text();
-    if (response.status === 404 && /not found|NOT_FOUND|not supported for generateContent/i.test(errorText)) {
-      modelNotFoundError = `接口请求失败（${response.status}）：${errorText || response.statusText}`;
-      continue;
-    }
-
-    throw new Error(`接口请求失败（${response.status}）：${errorText || response.statusText}`);
+    return handleResponse(response, onToken, extractGeminiText, options);
   }
 
   throw new Error(`${modelNotFoundError || 'Gemini 模型不可用。'} 请在「阶段模型」中切换为可用模型。`);
@@ -461,24 +491,21 @@ async function runLocalRelayStream(
   onToken: StreamTokenHandler,
   options?: LLMStreamOptions,
 ): Promise<string> {
-  const response = await fetch(config.baseUrl, {
-    method: 'POST',
-    signal: options?.signal,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
-      ...(config.extraHeaders ?? {}),
-    },
-    body: JSON.stringify({
-      provider: config.provider,
-      model: config.model,
-      systemPrompt,
-      userPrompt,
-      temperature: config.temperature,
-      stream: true,
-    }),
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+    ...(config.extraHeaders ?? {}),
+  };
+  const body = JSON.stringify({
+    provider: config.provider,
+    model: config.model,
+    systemPrompt,
+    userPrompt,
+    temperature: config.temperature,
+    stream: true,
   });
 
+  const response = await retryFetch(config.baseUrl, { method: 'POST', signal: options?.signal, headers, body }, options);
   return handleResponse(response, onToken, extractRelayText, options);
 }
 
@@ -723,6 +750,48 @@ ${validationFeedback ? `--- 修改建议（请根据以下建议调整大纲）-
   return { system, user };
 }
 
+// Compile outline revision prompt (based on existing outline + review feedback)
+export function compileOutlineRevisionPrompt(
+  currentOutline: string,
+  reviewFeedback: string,
+  background: string,
+  characters: string,
+  templateSkill: string,
+  wolfSkill?: string,
+  slapSkill?: string,
+  extraSkillContents: string[] = [],
+  extraSkillText = '',
+): { system: string; user: string } {
+  const system = `你是一位精通网文创作的资深编辑，专门进行大纲修订。你会根据审查反馈对现有大纲进行有针对性的修正，而非从头重写。
+严格遵循以下规则：
+
+--- 大纲输出格式模板 ---
+${templateSkill}
+${wolfSkill ? `\n--- 欧美狼人世界设定 ---\n${wolfSkill}` : ''}${slapSkill ? `\n--- 大女主打脸闭环技法 ---\n${slapSkill}` : ''}${extraSkillContents.length > 0 ? `\n--- 补充 Skill ---\n${extraSkillContents.join('\n\n')}` : ''}${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}
+
+【修订原则】
+1. 仅针对审查反馈中指出的问题进行修正，不要大幅改动审查未提及的部分。
+2. 保持原大纲的整体结构、节奏和风格。
+3. 修正后的输出必须是完整大纲（不只是修改的部分）。`;
+
+  const user = `
+--- 项目背景 ---
+${background || '未填写'}
+
+--- 人物设定 ---
+${characters || '未填写'}
+
+--- 当前大纲（需要修订）---
+${currentOutline}
+
+--- 审查反馈（请根据以下问题修正大纲）---
+${reviewFeedback}
+
+请根据审查反馈修正上述大纲，输出完整的大纲全文。`;
+
+  return { system, user };
+}
+
 // Compile outline logic review prompt
 export function compileOutlineLogicReviewPrompt(
   outline: string,
@@ -762,6 +831,8 @@ export function compileChapterPrompt({
   regenerationPrompt,
   extraSkillKeys = [],
   extraSkillText = '',
+  maxContextTokens,
+  storyMemory,
 }: {
   outline: string;
   chapterNum: number;
@@ -771,7 +842,12 @@ export function compileChapterPrompt({
   regenerationPrompt?: string;
   extraSkillKeys?: string[];
   extraSkillText?: string;
+  /** 最大上下文 token 数，默认 20000（约覆盖 32K 模型的 65% - 输出空间） */
+  maxContextTokens?: number;
+  /** 故事记忆（跨章节连续性信息） */
+  storyMemory?: import('../types').StoryMemory;
 }): { system: string; user: string } {
+  const tokenBudget = maxContextTokens ?? 20000;
   const degreaseSkill = skills.find(s => s.key === 'degrease')?.content || '';
   const connectSkill = skills.find(s => s.key === 'connect_skills')?.content || '';
   const logicCheckSkill = skills.find(s => s.key === 'logic_check')?.content || '';
@@ -779,7 +855,7 @@ export function compileChapterPrompt({
     .map(k => skills.find(s => s.key === k)?.content || '')
     .filter(Boolean);
 
-  const system = `你是一位顶级网文小说作家，即将根据大纲写第 ${chapterNum} 章。严格遵循以下规则。
+  let system = `你是一位顶级网文小说作家，即将根据大纲写第 ${chapterNum} 章。严格遵循以下规则。
 
 《大纲》是大纲。《AI去油》是写作手法约束。《串联》是你写小说需要执行的要求。
 
@@ -808,10 +884,14 @@ ${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}
     precedingContext = `上一章（第 ${prev.chapterNumber} 章）结尾为：\n"${lastPart}"\n\n必须从此结尾无缝衔接，保证时间、空间和情绪的连续性，不留断层。`;
   }
 
-  const user = `
+  const memorySection = storyMemory
+    ? `\n--- 故事记忆（已发生的关键事实）---\n角色状态：${storyMemory.characterStates}\n未收伏笔：${storyMemory.openForeshadowing}\n关键事件：${storyMemory.keyEvents}\n`
+    : '';
+
+  let user = `
 --- 完整大纲 ---
 ${outline}
-
+${memorySection}
 --- 上一章结尾（衔接参考）---
 ${precedingContext}
 
@@ -820,6 +900,47 @@ ${chapterOutline}
 
 ${regenerationPrompt?.trim() ? `--- 本章重写建议（高优先级）---\n${regenerationPrompt.trim()}\n（以上建议优先于默认生成风格，但不得违背大纲事件、角色连续性和已设定事实。）\n\n` : ''}根据上述要求，根据大纲，写小说第 ${chapterNum} 章。以"### 第 ${chapterNum} 章: [章节名]"开头，只输出标题和正文。
 `;
+
+  // ---- 上下文窗口裁剪 ----
+  let totalTokens = estimateTokens(system) + estimateTokens(user);
+  if (totalTokens > tokenBudget) {
+    // 优先级 1：裁剪完整大纲 → 只保留当前章节大纲
+    const trimmedUser = user.replace(
+      /--- 完整大纲 ---\n[\s\S]*?\n--- 上一章结尾/,
+      `--- 大纲（仅当前章节）---\n${chapterOutline}\n\n--- 上一章结尾`,
+    );
+    // 避免重复的章节大纲段：把后面紧跟的"第 X 章大纲及事件"段去掉
+    user = trimmedUser.replace(/--- 第 \d+ 章大纲及事件 ---\n[\s\S]*?\n\n根据上述要求/, '\n根据上述要求');
+    totalTokens = estimateTokens(system) + estimateTokens(user);
+  }
+
+  if (totalTokens > tokenBudget) {
+    // 优先级 2：去掉逻辑审查 skill（最小损失）
+    system = system.replace(/--- 《逻辑审查》[\s\S]*?(?=\n---|\n【输出规则】)/, '');
+    totalTokens = estimateTokens(system) + estimateTokens(user);
+  }
+
+  if (totalTokens > tokenBudget) {
+    // 优先级 3：截断前文上下文（从 1000 字缩至 500 字）
+    user = user.replace(
+      /(上一章（第 \d+ 章）结尾为：\n")[\s\S]*?("\n\n必须从此结尾无缝衔接)/,
+      (_, prefix, suffix) => {
+        const prev = previousChapters[previousChapters.length - 1];
+        const shortened = prev.content.length > 500
+          ? prev.content.substring(prev.content.length - 500)
+          : prev.content;
+        return `${prefix}${shortened}${suffix}`;
+      },
+    );
+    totalTokens = estimateTokens(system) + estimateTokens(user);
+  }
+
+  if (totalTokens > tokenBudget) {
+    // 优先级 4：整体裁剪 user prompt 到 token 预算
+    const systemTokens = estimateTokens(system);
+    const userBudget = tokenBudget - systemTokens - 200; // 预留 200 tokens 给输出格式
+    user = trimPromptToFit(user, userBudget);
+  }
 
   return { system, user };
 }
@@ -852,8 +973,35 @@ ${customDraft ? `--- 代表性正文片段（前三章）---\n${customDraft}` : 
 export function compileLogicReviewPrompt(
   chapterContent: string,
   chapterNum: number,
-  logicCheckSkill: string
+  logicCheckSkill: string,
+  structured = true,
 ): { system: string; user: string } {
+  if (structured) {
+    const system = `你是一位专业的小说逻辑审查编辑，严格依照《小说正文逻辑审查流程 Skill v3.2》执行审查。
+你必须输出严格 JSON，不要 Markdown 包裹，不要解释文字。JSON 结构如下：
+{"timeline":{"passed":true,"detail":"理由"},"location":{"passed":true,"detail":"理由"},"props":{"passed":true,"detail":"理由"},"characters":{"passed":true,"detail":"理由"},"emotionHook":{"passed":true,"detail":"理由"},"summary":"一句话总评"}
+passed 只能是 boolean。detail 用中文，必须具体指出通过依据或失败原因。`;
+
+    const user = `
+--- 逻辑审查规则（Skill v3.2）---
+${logicCheckSkill}
+
+--- 需要审查的第 ${chapterNum} 章正文 ---
+${chapterContent}
+
+请逐项审查以下维度：
+1. 时间线（timeline）：是否有时间矛盾
+2. 地点（location）：是否有空间矛盾
+3. 道具（props）：获取时间、名称一致性、材质常识
+4. 人物与行为（characters）：已知信息行为悖论
+5. 情感节奏（emotionHook）：章末钩子是否已设置
+
+只输出 JSON。`;
+
+    return { system, user };
+  }
+
+  // 非结构化格式（向后兼容）
   const system = `你是一位专业的小说逻辑审查编辑，严格依照《小说正文逻辑审查流程 Skill v3.2》执行审查。只输出格式化审查报告，不做其他说明。`;
 
   const user = `
@@ -873,6 +1021,110 @@ ${chapterContent}
 `;
 
   return { system, user };
+}
+
+/**
+ * 解析逻辑审查的 JSON 输出
+ * 解析失败时返回全项未通过，raw 文本作为 detail
+ */
+export function parseLogicReviewResult(raw: string): import('../types').LogicReviewResult {
+  const fallback: import('../types').LogicReviewResult = {
+    timeline: { passed: false, detail: '解析失败' },
+    location: { passed: false, detail: '解析失败' },
+    props: { passed: false, detail: '解析失败' },
+    characters: { passed: false, detail: '解析失败' },
+    emotionHook: { passed: false, detail: '解析失败' },
+    summary: raw.slice(0, 200),
+  };
+
+  try {
+    const jsonText = extractJsonObject(raw);
+    const parsed = JSON.parse(jsonText) as any;
+
+    const parseItem = (item: any): { passed: boolean; detail: string } => ({
+      passed: Boolean(item?.passed),
+      detail: typeof item?.detail === 'string' && item.detail.trim()
+        ? item.detail.trim()
+        : '模型未给出有效理由。',
+    });
+
+    return {
+      timeline: parseItem(parsed.timeline),
+      location: parseItem(parsed.location),
+      props: parseItem(parsed.props),
+      characters: parseItem(parsed.characters),
+      emotionHook: parseItem(parsed.emotionHook),
+      summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+// Compile story memory extraction prompt
+export function compileStoryMemoryExtractionPrompt(
+  chapterContent: string,
+  chapterNum: number,
+  previousMemory?: import('../types').StoryMemory,
+): { system: string; user: string } {
+  const system = `你是一位小说连续性分析专家。你的任务是从章节正文中提取关键的连续性信息，用于帮助后续章节的创作保持一致性。
+你必须输出严格 JSON，不要 Markdown，不要解释。JSON 结构如下：
+{"characterStates":"角色当前状态摘要","openForeshadowing":"未收伏笔清单","keyEvents":"影响后续剧情的关键事件"}
+每项用简洁的中文描述，不超过 200 字。`;
+
+  const prevSection = previousMemory
+    ? `--- 之前的故事记忆 ---
+角色状态：${previousMemory.characterStates}
+未收伏笔：${previousMemory.openForeshadowing}
+关键事件：${previousMemory.keyEvents}
+
+请在此基础上更新（保留仍有效的信息，追加新信息，移除已解决的伏笔）。`
+    : '这是第一章，从零开始提取。';
+
+  const user = `
+${prevSection}
+
+--- 第 ${chapterNum} 章正文 ---
+${chapterContent}
+
+请提取本章的关键连续性信息并输出 JSON。`;
+
+  return { system, user };
+}
+
+// Compile book title candidates prompt
+// (storyMemory extraction prompt is above)
+
+/**
+ * 从章节正文中提取故事记忆并保存到项目
+ * 可选调用，失败时静默忽略
+ */
+export async function extractAndSaveStoryMemory(
+  projectId: number,
+  chapterContent: string,
+  chapterNum: number,
+  previousMemory?: import('../types').StoryMemory,
+): Promise<import('../types').StoryMemory | undefined> {
+  try {
+    const compiled = compileStoryMemoryExtractionPrompt(chapterContent, chapterNum, previousMemory);
+    let raw = '';
+    await runLLMStream('review', compiled.system, compiled.user, tok => { raw += tok; });
+
+    const parsed = JSON.parse(extractJsonObject(raw)) as any;
+    const memory: import('../types').StoryMemory = {
+      characterStates: typeof parsed.characterStates === 'string' ? parsed.characterStates : '',
+      openForeshadowing: typeof parsed.openForeshadowing === 'string' ? parsed.openForeshadowing : '',
+      keyEvents: typeof parsed.keyEvents === 'string' ? parsed.keyEvents : '',
+      updatedAt: Date.now(),
+    };
+
+    const { db } = await import('../db');
+    await db.projects.update(projectId, { storyMemory: memory });
+    return memory;
+  } catch {
+    // 故事记忆提取失败不影响主流程
+    return undefined;
+  }
 }
 
 // Compile book title candidates prompt

@@ -1,3 +1,19 @@
+export interface StoryMemory {
+  characterStates: string;      // 当前角色状态（已知关系、立场、能力、物品持有）
+  openForeshadowing: string;    // 未收伏笔（已埋设但未揭示的线索）
+  keyEvents: string;            // 关键事件摘要（影响后续剧情走向的重大事件）
+  updatedAt: number;
+}
+
+export interface LogicReviewResult {
+  timeline: { passed: boolean; detail: string };
+  location: { passed: boolean; detail: string };
+  props: { passed: boolean; detail: string };
+  characters: { passed: boolean; detail: string };
+  emotionHook: { passed: boolean; detail: string };
+  summary: string;
+}
+
 export interface Project {
   id?: number;
   title: string;
@@ -12,6 +28,7 @@ export interface Project {
   createdAt: number;
   titleCandidates?: string; // LLM 生成的书名候选
   coverPrompt?: string;    // LLM 生成的封面提示词
+  storyMemory?: StoryMemory; // 跨章节故事记忆（角色状态/伏笔/关键事件）
 }
 
 export type OutlineChecklistKey =

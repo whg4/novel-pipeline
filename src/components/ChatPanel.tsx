@@ -73,7 +73,7 @@ function MessageActions({
           onClick={() => exportMd(content)}
         />
       </Tooltip>
-      {kind === 'logic-review' && onUseReviewSuggestion && (
+      {(kind === 'logic-review' || kind === 'review') && onUseReviewSuggestion && (
         <Tooltip title="使用该建议重新生成">
           <Button
             size="small"
