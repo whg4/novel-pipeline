@@ -1,10 +1,16 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { Project, Skill, ChatMessage } from '../../types';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
+import { Button, Space, Popover, Checkbox } from 'antd';
 import {
-  Sparkles, BookOpen, Layers, Edit3, FileUp,
-  FileSearch, Download
-} from 'lucide-react';
+  ThunderboltOutlined,
+  BookOutlined,
+  EditOutlined,
+  UploadOutlined,
+  AuditOutlined,
+  DownloadOutlined,
+  AppstoreOutlined,
+} from '@ant-design/icons';
 import ChatPanel from '../ChatPanel';
 import OutlineEditorModal from '../OutlineEditorModal';
 import ExampleModal from '../ExampleModal';
@@ -30,6 +36,7 @@ interface OutlineStudioProps {
   handleReviewOutline: (resume?: boolean) => void;
   handleOutlineChatSend: (userText: string) => void;
   handleClearOutlineChat: () => void;
+  onPause: () => void;
   renderTaskControl: TaskControlRender;
   syncOutlineChaptersToDb: (outline: string, projectId: number) => Promise<number>;
   setShowOutlineEditor: Dispatch<SetStateAction<boolean>>;
@@ -57,6 +64,7 @@ export default function OutlineStudio({
   handleReviewOutline,
   handleOutlineChatSend,
   handleClearOutlineChat,
+  onPause,
   renderTaskControl,
   syncOutlineChaptersToDb,
   setShowOutlineEditor,
@@ -65,6 +73,75 @@ export default function OutlineStudio({
   setOutlineExtraSkillKeys,
   setOutlineExtraSkillText,
 }: OutlineStudioProps) {
+  // ── Skill 选择 Popover 内容 ──
+  const skillPopoverContent = (
+    <div style={{ minWidth: 200 }}>
+      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+        {skills
+          .filter((s) => !['workflow', 'blurb', 'outline_template'].includes(s.key))
+          .map((s) => (
+            <Checkbox
+              key={s.key}
+              checked={outlineExtraSkillKeys.includes(s.key)}
+              onChange={(e) => {
+                setOutlineExtraSkillKeys(
+                  e.target.checked
+                    ? [...outlineExtraSkillKeys, s.key]
+                    : outlineExtraSkillKeys.filter((k: string) => k !== s.key),
+                );
+              }}
+            >
+              <span style={{ fontSize: 11 }}>{s.name}</span>
+            </Checkbox>
+          ))}
+        <div
+          style={{
+            borderTop: '1px solid #eaeaea',
+            paddingTop: 6,
+            marginTop: 4,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 10,
+              color: '#888888',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            <UploadOutlined style={{ fontSize: 9 }} /> 上传临时 Skill
+            <input
+              type="file"
+              accept=".txt,.md"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) =>
+                  setOutlineExtraSkillText((ev.target?.result as string) || '');
+                reader.readAsText(file, 'utf-8');
+                e.target.value = '';
+                setShowOutlineSkillPopover(false);
+              }}
+            />
+          </label>
+          {outlineExtraSkillKeys.length > 0 && (
+            <span style={{ fontSize: 9, color: '#000000', fontWeight: 700 }}>
+              {outlineExtraSkillKeys.length} 已选
+            </span>
+          )}
+        </div>
+      </Space>
+    </div>
+  );
+
   return (
     <div className="space-y-4">
       <OutlineEditorModal
@@ -75,7 +152,10 @@ export default function OutlineStudio({
           const { preamble, checklist, appendix } = splitOutlineSections(project.outline);
           const merged = [preamble, val, checklist, appendix].filter(Boolean).join('\n\n');
           const { db } = await import('../../db');
-          await db.projects.update(projectId, { outline: merged, outlineValidationUpdatedAt: Date.now() });
+          await db.projects.update(projectId, {
+            outline: merged,
+            outlineValidationUpdatedAt: Date.now(),
+          });
         }}
       />
 
@@ -83,45 +163,63 @@ export default function OutlineStudio({
         messages={outlineChatMessages}
         isStreaming={isGenerating && (activeTask === 'outline' || activeTask === 'outline-review')}
         streamingContent={activeTask === 'outline' ? generationOutput : outlineReviewOutput}
-        streamingLabel={activeTask === 'outline' ? (outlineGenerationStatus || '生成大纲中...') : '审查大纲中...'}
+        streamingLabel={
+          activeTask === 'outline'
+            ? outlineGenerationStatus || '生成大纲中...'
+            : '审查大纲中...'
+        }
         onSend={handleOutlineChatSend}
         onClear={handleClearOutlineChat}
+        onPause={onPause}
         disabled={!project}
         placeholder="输入修改意见后按 Enter 发送，或点击上方按钮直接生成大纲..."
         toolbar={
-          <>
-            <button
+          <Space size={6} wrap>
+            <Button
+              type="primary"
+              size="small"
+              icon={
+                <ThunderboltOutlined
+                  spin={activeTask === 'outline' && isGenerating}
+                />
+              }
               disabled={isGenerating}
               onClick={() => handleOutlineChatSend('')}
-              className="flex items-center gap-1 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-[10px] font-bold px-2.5 py-1.5 transition"
             >
-              <Sparkles size={10} className={activeTask === 'outline' && isGenerating ? 'animate-spin' : ''} />
               {project.outline ? '重新生成' : '生成大纲'}
-            </button>
+            </Button>
             {renderTaskControl('outline', () => handleGenerateOutline(true))}
 
-            <button
+            <Button
+              size="small"
+              icon={<ThunderboltOutlined />}
               disabled={isGenerating}
               onClick={() => {
-                const slapContent = skills.find(s => s.key === 'female_slap')?.content || '';
+                const slapContent =
+                  skills.find((s) => s.key === 'female_slap')?.content || '';
                 handleGenerateOutline(false, slapContent);
               }}
-              className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
             >
-              <Sparkles size={10} /> 打脸闭环
-            </button>
+              打脸闭环
+            </Button>
 
-            <button
+            <Button
+              size="small"
+              icon={
+                <AuditOutlined
+                  spin={activeTask === 'outline-review' && isGenerating}
+                />
+              }
               disabled={isGenerating || !project.outline}
               onClick={() => handleReviewOutline()}
-              className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
             >
-              <FileSearch size={10} className={activeTask === 'outline-review' && isGenerating ? 'animate-spin' : ''} />
               审查大纲
-            </button>
+            </Button>
             {renderTaskControl('outline-review', () => handleReviewOutline(true))}
 
-            <button
+            <Button
+              size="small"
+              icon={<DownloadOutlined />}
               disabled={!project.outline}
               onClick={() => {
                 const blob = new Blob([project.outline], { type: 'text/markdown' });
@@ -132,86 +230,55 @@ export default function OutlineStudio({
                 a.click();
                 URL.revokeObjectURL(url);
               }}
-              className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
             >
-              <Download size={10} /> 导出 MD
-            </button>
+              导出 MD
+            </Button>
 
-            <button
+            <Button
+              size="small"
+              icon={<BookOutlined />}
               disabled={isGenerating || !project.outline}
               onClick={async () => {
                 const n = await syncOutlineChaptersToDb(project.outline, projectId);
-                alert(n > 0 ? `已同步 ${n} 个章节到数据库。` : '未在大纲中找到章节（请确认包含"### 第 X 章："格式）。');
+                alert(
+                  n > 0
+                    ? `已同步 ${n} 个章节到数据库。`
+                    : '未在大纲中找到章节（请确认包含"### 第 X 章："格式）。',
+                );
               }}
-              className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
             >
-              <BookOpen size={10} /> 同步章节
-            </button>
+              同步章节
+            </Button>
 
-            <div className="relative">
-              <button
-                onClick={() => setShowOutlineSkillPopover(v => !v)}
-                className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
-              >
-                <Layers size={10} /> 选择 Skill {showOutlineSkillPopover ? '▴' : '▾'}
-              </button>
-              {showOutlineSkillPopover && (
-                <div className="absolute bottom-full mb-1 left-0 z-20 bg-paper border border-rule shadow-lg p-2 min-w-[200px] space-y-1">
-                  {skills.filter(s => !['workflow', 'blurb', 'outline_template'].includes(s.key)).map(s => (
-                    <label key={s.key} className="flex items-center gap-2 text-[10px] text-ink cursor-pointer py-0.5 hover:bg-paper-100 px-1">
-                      <input
-                        type="checkbox"
-                        checked={outlineExtraSkillKeys.includes(s.key)}
-                        onChange={(e) => {
-                          setOutlineExtraSkillKeys(e.target.checked
-                            ? [...outlineExtraSkillKeys, s.key]
-                            : outlineExtraSkillKeys.filter((k: string) => k !== s.key));
-                        }}
-                        className="accent-[#9b2d20] shrink-0"
-                      />
-                      <span className="truncate">{s.name}</span>
-                    </label>
-                  ))}
-                  <div className="pt-1 border-t border-rule mt-1">
-                    <label className="flex items-center gap-1 text-[10px] text-ink-400 font-bold cursor-pointer hover:bg-paper-100 px-1">
-                      <FileUp size={9} /> 上传临时 Skill
-                      <input
-                        type="file"
-                        accept=".txt,.md"
-                        className="hidden"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0];
-                          if (!file) return;
-                          const reader = new FileReader();
-                          reader.onload = (ev) => setOutlineExtraSkillText(ev.target?.result as string || '');
-                          reader.readAsText(file, 'utf-8');
-                          e.target.value = '';
-                          setShowOutlineSkillPopover(false);
-                        }}
-                      />
-                    </label>
-                    {outlineExtraSkillKeys.length > 0 && (
-                      <span className="text-[9px] text-accent font-bold px-1">{outlineExtraSkillKeys.length} 已选</span>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
+            <Popover
+              content={skillPopoverContent}
+              title="选择 Skill"
+              trigger="click"
+              open={showOutlineSkillPopover}
+              onOpenChange={setShowOutlineSkillPopover}
+              placement="topLeft"
+            >
+              <Button size="small" icon={<AppstoreOutlined />}>
+                选择 Skill
+              </Button>
+            </Popover>
 
-            <button
+            <Button
+              size="small"
+              icon={<UploadOutlined />}
               onClick={() => setShowExampleModal(true)}
-              className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
             >
-              <FileUp size={10} /> 上传例文{project.rawExample ? ' ✓' : ''}
-            </button>
+              上传例文{project.rawExample ? ' ✓' : ''}
+            </Button>
 
-            <button
+            <Button
+              size="small"
+              icon={<EditOutlined />}
               onClick={() => setShowOutlineEditor(true)}
-              className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
             >
-              <Edit3 size={10} /> 编辑大纲
-            </button>
-          </>
+              编辑大纲
+            </Button>
+          </Space>
         }
       />
 
@@ -220,7 +287,9 @@ export default function OutlineStudio({
         onClose={() => setShowExampleModal(false)}
         rawExample={project.rawExample || ''}
         onChange={(text) => {
-          import('../../db').then(({ db }) => db.projects.update(projectId, { rawExample: text }));
+          import('../../db').then(({ db }) =>
+            db.projects.update(projectId, { rawExample: text }),
+          );
         }}
         onSave={() => {/* saved via onChange */}}
       />

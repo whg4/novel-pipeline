@@ -10,7 +10,7 @@ function applyInline(s: string): string {
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
   s = s.replace(/\*([^*\n]+?)\*/g, '<em>$1</em>');
-  s = s.replace(/`([^`\n]+?)`/g, '<code class="bg-paper-50 border border-rule px-1 font-mono text-[10px] rounded-sm">$1</code>');
+  s = s.replace(/`([^`\n]+?)`/g, '<code class="bg-[#f9f9f9] border border-[#eaeaea] px-1 font-mono text-[10px] rounded-sm">$1</code>');
   return s;
 }
 
@@ -21,13 +21,13 @@ export function renderMarkdown(text: string): { __html: string } {
   while (i < lines.length) {
     const line = lines[i].trimEnd();
     if (/^-{3,}$/.test(line) || /^={3,}$/.test(line)) {
-      chunks.push('<hr class="border-rule my-2" />');
+      chunks.push('<hr class="border-[#eaeaea] my-2" />');
       i++; continue;
     }
     const hMatch = line.match(/^(#{1,6})\s+(.*)/);
     if (hMatch) {
       const sizes = ['text-sm font-black', 'text-sm font-bold', 'text-xs font-bold', 'text-xs font-semibold', 'text-xs font-semibold', 'text-xs font-semibold'];
-      chunks.push(`<p class="${sizes[hMatch[1].length - 1]} text-ink mt-3 mb-1">${applyInline(hMatch[2])}</p>`);
+      chunks.push(`<p class="${sizes[hMatch[1].length - 1]} text-[#171717] mt-3 mb-1">${applyInline(hMatch[2])}</p>`);
       i++; continue;
     }
     if (/^[-*]\s/.test(line)) {

@@ -1,7 +1,15 @@
-import { useState, useRef, useEffect } from 'react';
-import { Copy, Download, Send, RefreshCw, MessageSquare, Trash2, RotateCcw } from 'lucide-react';
+import { useState } from 'react';
+import { Bubble, Sender, Welcome } from '@ant-design/x';
+import { XMarkdown } from '@ant-design/x-markdown';
+import { Button, Space, Popconfirm, message as antdMessage, Tooltip } from 'antd';
+import {
+  CopyOutlined,
+  DownloadOutlined,
+  SyncOutlined,
+  DeleteOutlined,
+  MessageOutlined,
+} from '@ant-design/icons';
 import type { ChatMessage } from '../types';
-import { renderMarkdown } from '../utils/markdown';
 
 interface ChatPanelProps {
   messages: ChatMessage[];
@@ -11,6 +19,7 @@ interface ChatPanelProps {
   toolbar?: React.ReactNode;
   onSend: (text: string) => void;
   onClear?: () => void;
+  onPause?: () => void;
   onUseReviewSuggestion?: (reviewContent: string) => void;
   disabled?: boolean;
   placeholder?: string;
@@ -27,6 +36,58 @@ function exportMd(content: string) {
   URL.revokeObjectURL(url);
 }
 
+const kindLabels: Record<string, string> = {
+  outline: '大纲',
+  review: '大纲审查',
+  chapter: '正文',
+  'logic-review': '逻辑审查',
+};
+
+// ── AI 消息操作按钮 ──
+function MessageActions({
+  content,
+  kind,
+  onUseReviewSuggestion,
+}: {
+  content: string;
+  kind?: string;
+  onUseReviewSuggestion?: (reviewContent: string) => void;
+}) {
+  return (
+    <Space size={4}>
+      <Tooltip title="复制">
+        <Button
+          size="small"
+          type="text"
+          icon={<CopyOutlined />}
+          onClick={() => {
+            navigator.clipboard.writeText(content).then(() => antdMessage.success('已复制！'));
+          }}
+        />
+      </Tooltip>
+      <Tooltip title="导出 Markdown">
+        <Button
+          size="small"
+          type="text"
+          icon={<DownloadOutlined />}
+          onClick={() => exportMd(content)}
+        />
+      </Tooltip>
+      {kind === 'logic-review' && onUseReviewSuggestion && (
+        <Tooltip title="使用该建议重新生成">
+          <Button
+            size="small"
+            type="text"
+            icon={<SyncOutlined />}
+            onClick={() => onUseReviewSuggestion(content)}
+            style={{ color: '#000000' }}
+          />
+        </Tooltip>
+      )}
+    </Space>
+  );
+}
+
 export default function ChatPanel({
   messages,
   isStreaming,
@@ -35,160 +96,206 @@ export default function ChatPanel({
   toolbar,
   onSend,
   onClear,
+  onPause,
   onUseReviewSuggestion,
   disabled,
   placeholder,
   className = '',
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Scroll to bottom on new messages or while streaming
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages.length, streamingContent]);
+  // ── 将 ChatMessage[] 转换为 Bubble.List items 格式 ──
+  const bubbleItems = messages.map((msg) => ({
+    key: msg.id ?? `msg-${msg.createdAt}`,
+    role: msg.role === 'user' ? 'user' : 'ai',
+    content: msg.role === 'user' ? (msg.content || '（触发生成）') : msg.content,
+    placement: msg.role === 'user' ? ('end' as const) : ('start' as const),
+    header:
+      msg.role === 'assistant' && msg.kind ? (
+        <Tooltip title={kindLabels[msg.kind]}>
+          <span
+            style={{
+              fontSize: 9,
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.1em',
+              color: '#888888',
+              padding: '1px 6px',
+              border: '1px solid #eaeaea',
+              background: '#f5f5f5',
+              display: 'inline-block',
+            }}
+          >
+            {kindLabels[msg.kind]}
+          </span>
+        </Tooltip>
+      ) : undefined,
+    footer:
+      msg.role === 'assistant' ? (
+        <MessageActions
+          content={msg.content}
+          kind={msg.kind}
+          onUseReviewSuggestion={onUseReviewSuggestion}
+        />
+      ) : undefined,
+  }));
 
-  const handleSend = () => {
-    const text = input.trim();
-    onSend(text);
-    setInput('');
-    textareaRef.current?.focus();
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (!disabled && !isStreaming) handleSend();
+  // ── 追加流式气泡 ──
+  if (isStreaming) {
+    if (streamingContent) {
+      bubbleItems.push({
+        key: 'streaming',
+        role: 'ai',
+        content: streamingContent,
+        placement: 'start' as const,
+        header: undefined,
+        footer: undefined,
+      });
+    } else {
+      bubbleItems.push({
+        key: 'streaming-waiting',
+        role: 'ai',
+        content: streamingLabel,
+        placement: 'start' as const,
+        header: undefined,
+        footer: undefined,
+      });
     }
+  }
+
+  // ── Role 预设样式 ──
+  const role = {
+    user: {
+      placement: 'end' as const,
+      variant: 'filled' as const,
+      style: {
+        maxWidth: '75%',
+      },
+      styles: {
+        content: {
+          backgroundColor: '#000000',
+          color: '#ffffff',
+          fontSize: 12,
+          paddingBlock: 8,
+          paddingInline: 12,
+        },
+      },
+    },
+    ai: {
+      placement: 'start' as const,
+      variant: 'borderless' as const,
+      contentRender: (content: string) => (
+        <XMarkdown
+          content={content}
+          streaming={
+            isStreaming && bubbleItems[bubbleItems.length - 1]?.content === content
+              ? { tail: true }
+              : undefined
+          }
+        />
+      ),
+      style: {
+        width: '100%',
+      },
+      styles: {
+        content: {
+          fontSize: 13,
+          paddingBlock: 8,
+          paddingInline: 12,
+        },
+      },
+    },
   };
 
   return (
     <div
-      className={`flex flex-col bg-paper-50 border border-rule ${className}`}
-      style={{ height: 'calc(100vh - 240px)', minHeight: '480px' }}
+      className={`flex flex-col ${className}`}
+      style={{
+        height: 'calc(100vh - 240px)',
+        minHeight: 480,
+        border: '1px solid #eaeaea',
+        background: '#f9f9f9',
+      }}
     >
       {/* ── Messages area ── */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto min-h-0">
-        <div className="p-4 space-y-4">
-        {messages.length === 0 && !isStreaming && (
-          <div className="flex flex-col items-center justify-center h-full text-ink-300 gap-2">
-            <MessageSquare size={28} />
-            <p className="text-xs font-semibold">还没有对话记录</p>
-            <p className="text-[10px]">点击上方操作按钮或在下方输入内容开始</p>
-          </div>
-        )}
-
-        {messages.map((msg) => (
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+        {messages.length === 0 && !isStreaming ? (
           <div
-            key={msg.id}
-            className={`flex flex-col gap-1.5 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
+            }}
           >
-            {msg.role === 'user' ? (
-              <div className="max-w-[75%] bg-accent text-white text-xs px-3 py-2 leading-relaxed whitespace-pre-wrap break-words">
-                {msg.content || '（触发生成）'}
-              </div>
-            ) : (
-              <div className="w-full space-y-1.5">
-                {/* Kind badge */}
-                {msg.kind && (
-                  <span className="text-[9px] font-bold uppercase tracking-widest text-ink-400 px-1.5 py-0.5 border border-rule bg-paper">
-                    {msg.kind === 'outline' ? '大纲' : msg.kind === 'review' ? '大纲审查' : msg.kind === 'chapter' ? '正文' : '逻辑审查'}
-                  </span>
-                )}
-                <div
-                  className="w-full bg-paper border border-rule p-3 text-xs text-ink leading-relaxed break-words prose-sm"
-                  dangerouslySetInnerHTML={renderMarkdown(msg.content)}
-                />
-                <div className="flex flex-wrap gap-1.5">
-                  <button
-                    onClick={() => navigator.clipboard.writeText(msg.content).then(() => alert('已复制！'))}
-                    className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-ink border border-rule px-2 py-0.5 bg-paper hover:bg-paper-100 transition"
-                  >
-                    <Copy size={10} /> 复制
-                  </button>
-                  <button
-                    onClick={() => exportMd(msg.content)}
-                    className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-ink border border-rule px-2 py-0.5 bg-paper hover:bg-paper-100 transition"
-                  >
-                    <Download size={10} /> 导出 MD
-                  </button>
-                  {msg.kind === 'logic-review' && onUseReviewSuggestion && (
-                    <button
-                      onClick={() => onUseReviewSuggestion(msg.content)}
-                      className="flex items-center gap-1 text-[10px] text-accent hover:text-accent-hover border border-accent/40 hover:border-accent px-2 py-0.5 bg-paper hover:bg-accent-faint transition font-bold"
-                    >
-                      <RotateCcw size={10} /> 使用该建议重新生成
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
+            <Welcome
+              variant="borderless"
+              icon={<MessageOutlined style={{ fontSize: 32, color: '#d4d4d4' }} />}
+              title="还没有对话记录"
+              description="点击上方操作按钮或在下方输入内容开始"
+            />
           </div>
-        ))}
-
-        {/* ── Streaming bubble ── */}
-        {isStreaming && (
-          <div className="flex flex-col items-start gap-1.5">
-            {streamingContent ? (
-              <div className="w-full bg-paper border border-accent/40 p-3 font-mono text-xs text-ink leading-relaxed whitespace-pre-wrap break-words">
-                {streamingContent}
-                <span className="inline-block w-1.5 h-3 bg-accent animate-pulse ml-0.5 align-middle" />
-              </div>
-            ) : (
-              <div className="bg-paper border border-rule px-3 py-2 flex items-center gap-2 text-xs text-ink-400">
-                <RefreshCw size={12} className="animate-spin text-accent" />
-                {streamingLabel}
-              </div>
-            )}
-          </div>
+        ) : (
+          <Bubble.List
+            items={bubbleItems}
+            role={role}
+            autoScroll
+            style={{ height: '100%', padding: '16px 16px 0' }}
+          />
         )}
-
-        <div ref={bottomRef} />
-        </div>
       </div>
 
       {/* ── Toolbar + Input ── */}
-      <div className="border-t border-rule p-3 space-y-2 bg-paper shrink-0">
+      <div
+        style={{
+          borderTop: '1px solid #eaeaea',
+          padding: 12,
+          background: '#ffffff',
+          flexShrink: 0,
+        }}
+      >
         {(toolbar || onClear) && (
-          <div className="flex flex-wrap items-center gap-1.5 pb-1.5 border-b border-rule">
-            <div className="flex flex-wrap gap-1.5 flex-1">
-              {toolbar}
-            </div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 6,
+              paddingBottom: 8,
+              marginBottom: 8,
+              borderBottom: '1px solid #eaeaea',
+            }}
+          >
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: 1 }}>{toolbar}</div>
             {onClear && (
-              <button
-                onClick={() => {
-                  if (window.confirm('清除所有对话记录？')) onClear();
-                }}
-                className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-red-500 border border-rule px-2 py-1 bg-paper hover:bg-red-50 transition shrink-0"
+              <Popconfirm
+                title="清除对话记录"
+                description="确认清除所有对话记录？"
+                onConfirm={onClear}
+                okText="确认"
+                cancelText="取消"
               >
-                <Trash2 size={9} /> 清屏
-              </button>
+                <Button size="small" icon={<DeleteOutlined />} danger>
+                  清屏
+                </Button>
+              </Popconfirm>
             )}
           </div>
         )}
-        <div className="flex gap-2 items-end">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            rows={2}
-            placeholder={placeholder || '输入消息... (Enter 发送，Shift+Enter 换行)'}
-            disabled={disabled || isStreaming}
-            className="flex-1 bg-paper-50 border border-rule p-2.5 font-mono text-[11px] text-ink focus:outline-none focus:border-accent leading-relaxed resize-none disabled:opacity-50"
-          />
-          <button
-            onClick={handleSend}
-            disabled={disabled || isStreaming}
-            className="self-end bg-accent hover:bg-accent-hover disabled:opacity-50 text-white px-3 py-2 flex items-center gap-1.5 text-xs font-bold transition shrink-0"
-          >
-            <Send size={12} /> 发送
-          </button>
-        </div>
+        <Sender
+          value={input}
+          onChange={setInput}
+          onSubmit={(text) => {
+            onSend(text);
+            setInput('');
+          }}
+          onCancel={onPause}
+          loading={isStreaming}
+          disabled={disabled}
+          placeholder={placeholder || '输入消息... (Enter 发送，Shift+Enter 换行)'}
+          submitType="enter"
+          autoSize={{ minRows: 2, maxRows: 6 }}
+        />
       </div>
     </div>
   );

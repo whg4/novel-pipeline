@@ -9,7 +9,7 @@ import {
   LLM_PAUSED_ERROR
 } from '../services/llm';
 import {
-  Sparkles, Layers, Edit3, Play, Pause, Download, PenLine
+  Sparkles, Layers, Edit3, Play, Download, PenLine
 } from 'lucide-react';
 import { usePipelineTask } from '../hooks/usePipelineTask';
 import type { TaskControlRender } from '../hooks/usePipelineTask';
@@ -262,26 +262,14 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
     setChapterRegenerationPrompt(ch.regenerationPrompt || '');
   };
 
-  // Shared renderTaskControl
+  // Shared renderTaskControl — 暂停已由 Sender onCancel 处理，此处只渲染 Resume 按钮
   const renderTaskControl: TaskControlRender = (task, onResume) => {
-    if (activeTask === task) {
-      return (
-        <button
-          type="button"
-          onClick={() => pauseCurrentTask(autoPauseRef)}
-          className="bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
-        >
-          <Pause size={12} /> 暂停
-        </button>
-      );
-    }
-
     if (pausedTask === task) {
       return (
         <button
           type="button"
           onClick={onResume}
-          className="bg-accent hover:bg-accent-hover text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
+          className="bg-black hover:bg-[#333] text-white text-xs font-bold px-3 py-1.5 flex items-center gap-1.5 transition"
         >
           <Play size={12} /> 继续
         </button>
@@ -358,8 +346,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
 
   if (!project) {
     return (
-      <div className="flex items-center justify-center p-12 text-ink-400">
-        <Sparkles size={36} className="animate-spin text-ink-300 mb-2" />
+      <div className="flex items-center justify-center p-12 text-[#888888]">
+        <Sparkles size={36} className="animate-spin text-[#d4d4d4] mb-2" />
         <p className="text-sm">加载项目中...</p>
       </div>
     );
@@ -1067,9 +1055,9 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   return (
     <div className="space-y-6">
       {/* 项目标题与导航 */}
-      <div className="border-b-2 border-ink pb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      <div className="border-b border-[#171717] pb-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
         <div>
-          <div className="text-[10px] font-bold text-ink-400 uppercase tracking-widest">当前项目</div>
+          <div className="text-[10px] font-bold text-[#888888] uppercase tracking-widest">当前项目</div>
           <div className="flex items-center gap-2 mt-0.5">
             <input
               type="text"
@@ -1084,13 +1072,13 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
               }}
-              className="text-xl font-black font-display text-ink bg-transparent border-b border-transparent hover:border-rule focus:border-accent focus:outline-none w-full max-w-xs"
+              className="text-xl font-black font-sans text-[#171717] bg-transparent border-b border-transparent hover:border-[#eaeaea] focus:border-black focus:outline-none w-full max-w-xs"
               placeholder="项目书名（点击编辑）"
             />
             <button
               onClick={() => setShowTitleModal(true)}
               title="生成备选书名"
-              className="p-1 text-ink-400 hover:text-accent border border-rule hover:border-accent bg-paper hover:bg-accent-faint transition shrink-0"
+              className="p-1 text-[#888888] hover:text-black border border-[#eaeaea] hover:border-black bg-white hover:bg-[#f5f5f5] transition shrink-0"
             >
               <PenLine size={13} />
             </button>
@@ -1100,7 +1088,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
         <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={handleExportNovelMarkdown}
-            className="flex items-center gap-1.5 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-xs font-bold px-3 py-1.5 transition"
+            className="flex items-center gap-1.5 bg-white border border-[#eaeaea] hover:bg-[#f5f5f5] text-[#696b72] text-xs font-bold px-3 py-1.5 transition"
           >
             <Download size={12} /> 导出小说
           </button>
@@ -1109,17 +1097,17 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             <button
               onClick={() => handleRunAutoPipeline(false)}
               disabled={isGenerating}
-              className="flex items-center gap-1.5 bg-accent hover:bg-accent-hover disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 transition"
+              className="flex items-center gap-1.5 bg-black hover:bg-[#333] disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 transition"
             >
               <Play size={12} /> 一键全自动
             </button>
           )}
 
-          <div className="flex border-b border-rule">
+          <div className="flex border-b border-[#eaeaea]">
             <button
               onClick={() => setPipelineTab('outline')}
               className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border-b-2 transition -mb-px ${
-                pipelineTab === 'outline' ? 'border-accent text-accent' : 'border-transparent text-ink-500 hover:text-ink'
+                pipelineTab === 'outline' ? 'border-black text-black' : 'border-transparent text-[#696b72] hover:text-[#171717]'
               }`}
             >
               <Layers size={13} /> 第一阶段：大纲
@@ -1127,7 +1115,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             <button
               onClick={() => setPipelineTab('drafting')}
               className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border-b-2 transition -mb-px ${
-                pipelineTab === 'drafting' ? 'border-accent text-accent' : 'border-transparent text-ink-500 hover:text-ink'
+                pipelineTab === 'drafting' ? 'border-black text-black' : 'border-transparent text-[#696b72] hover:text-[#171717]'
               }`}
             >
               <Edit3 size={13} /> 第二阶段：写作间
@@ -1135,7 +1123,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             <button
               onClick={() => setPipelineTab('marketing')}
               className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border-b-2 transition -mb-px ${
-                pipelineTab === 'marketing' ? 'border-accent text-accent' : 'border-transparent text-ink-500 hover:text-ink'
+                pipelineTab === 'marketing' ? 'border-black text-black' : 'border-transparent text-[#696b72] hover:text-[#171717]'
               }`}
             >
               <Sparkles size={13} /> 第三阶段：推广
@@ -1176,6 +1164,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           handleReviewOutline={handleReviewOutline}
           handleOutlineChatSend={handleOutlineChatSend}
           handleClearOutlineChat={handleClearOutlineChat}
+          onPause={() => pauseCurrentTask(autoPauseRef)}
           renderTaskControl={renderTaskControl}
           syncOutlineChaptersToDb={syncOutlineChaptersToDb}
           setShowOutlineEditor={setShowOutlineEditor}
@@ -1215,6 +1204,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           handleChapterChatSend={handleChapterChatSend}
           handleClearChapterChat={handleClearChapterChat}
           handleUseReviewSuggestion={handleUseReviewSuggestion}
+          onPause={() => pauseCurrentTask(autoPauseRef)}
           renderTaskControl={renderTaskControl}
           setEditingOutline={setEditingOutline}
           setChapterExtraSkillKeys={setChapterExtraSkillKeys}

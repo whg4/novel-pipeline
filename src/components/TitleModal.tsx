@@ -39,11 +39,11 @@ export default function TitleModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-paper border border-rule shadow-lg w-full max-w-lg mx-4 flex flex-col max-h-[85vh]">
+      <div className="bg-white border border-[#eaeaea] shadow-lg w-full max-w-lg mx-4 flex flex-col max-h-[85vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-rule shrink-0">
-          <h2 className="text-sm font-black font-display text-ink">书名编辑 &amp; 生成</h2>
-          <button onClick={onClose} className="text-ink-400 hover:text-ink transition">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-[#eaeaea] shrink-0">
+          <h2 className="text-sm font-black font-sans text-[#171717]">书名编辑 &amp; 生成</h2>
+          <button onClick={onClose} className="text-[#888888] hover:text-[#171717] transition">
             <X size={16} />
           </button>
         </div>
@@ -51,18 +51,18 @@ export default function TitleModal({
         <div className="overflow-y-auto flex-1 p-5 space-y-5">
           {/* 当前书名编辑 */}
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-ink-400 uppercase tracking-widest block">当前书名</label>
+            <label className="text-[10px] font-bold text-[#888888] uppercase tracking-widest block">当前书名</label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
-                className="flex-1 bg-paper-50 border border-rule px-3 py-2 text-sm font-bold text-ink focus:outline-none focus:border-accent"
+                className="flex-1 bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm font-bold text-[#171717] focus:outline-none focus:border-black"
                 placeholder="输入书名..."
               />
               <button
                 onClick={() => onApplyTitle(editTitle)}
-                className="bg-accent hover:bg-accent-hover text-white text-xs font-bold px-3 py-2 flex items-center gap-1.5 transition shrink-0"
+                className="bg-black hover:bg-[#333] text-white text-xs font-bold px-3 py-2 flex items-center gap-1.5 transition shrink-0"
               >
                 <Check size={12} /> 保存
               </button>
@@ -71,18 +71,18 @@ export default function TitleModal({
 
           {/* 生成候选 */}
           <div className="space-y-2">
-            <label className="text-[10px] font-bold text-ink-400 uppercase tracking-widest block">AI 生成要求（可选）</label>
+            <label className="text-[10px] font-bold text-[#888888] uppercase tracking-widest block">AI 生成要求（可选）</label>
             <textarea
               value={titleCustomPrompt}
               onChange={(e) => onSetCustomPrompt(e.target.value)}
               rows={2}
               placeholder='例如"侧重权谋感、主角是医女"...'
-              className="w-full bg-paper-50 border border-rule p-2.5 font-mono text-[10px] text-ink resize-none focus:outline-none focus:border-accent"
+              className="w-full bg-[#f9f9f9] border border-[#eaeaea] p-2.5 font-mono text-[10px] text-[#171717] resize-none focus:outline-none focus:border-black"
             />
             <button
               onClick={onGenerate}
               disabled={isGenerating}
-              className="w-full bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-xs font-bold px-3 py-2 flex items-center justify-center gap-1.5 transition"
+              className="w-full bg-white border border-[#eaeaea] hover:bg-[#f5f5f5] disabled:opacity-50 text-[#696b72] text-xs font-bold px-3 py-2 flex items-center justify-center gap-1.5 transition"
             >
               {isGenerating ? (
                 <><RefreshCw size={12} className="animate-spin" /> 生成中...</>
@@ -95,8 +95,8 @@ export default function TitleModal({
           {/* 候选列表 */}
           {candidateLines.length > 0 && (
             <div className="space-y-2">
-              <label className="text-[10px] font-bold text-ink-400 uppercase tracking-widest block">候选书名（点击应用）</label>
-              <div className="bg-paper-50 border border-rule p-3 space-y-1 max-h-52 overflow-y-auto font-mono text-[11px] text-ink leading-relaxed">
+              <label className="text-[10px] font-bold text-[#888888] uppercase tracking-widest block">候选书名（点击应用）</label>
+              <div className="bg-[#f9f9f9] border border-[#eaeaea] p-3 space-y-1 max-h-52 overflow-y-auto font-mono text-[11px] text-[#171717] leading-relaxed">
                 {candidateLines.map((line, i) => (
                   <div
                     key={i}
@@ -104,7 +104,7 @@ export default function TitleModal({
                       const clean = line.replace(/^[\d\.\-\*】】【\s]+/, '').split(/[（(]/)[0].trim();
                       if (clean) setEditTitle(clean);
                     }}
-                    className="cursor-pointer hover:bg-accent-faint hover:text-accent px-1.5 py-0.5 transition"
+                    className="cursor-pointer hover:bg-[#f5f5f5] hover:text-black px-1.5 py-0.5 transition"
                   >
                     {line}
                   </div>

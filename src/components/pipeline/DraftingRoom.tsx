@@ -1,13 +1,25 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { Project, Chapter, Skill, ChatMessage } from '../../types';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
+import { Button, Space, Popover, Checkbox, Modal, Alert, Typography } from 'antd';
 import {
-  BookOpen, Edit3, Plus, Save, Download,
-  AlertTriangle, Sparkles, FileSearch, FileUp,
-  Layers, Eye, X
-} from 'lucide-react';
+  BookOutlined,
+  EditOutlined,
+  PlusOutlined,
+  SaveOutlined,
+  DownloadOutlined,
+  ExclamationCircleOutlined,
+  ThunderboltOutlined,
+  AuditOutlined,
+  UploadOutlined,
+  AppstoreOutlined,
+  EyeOutlined,
+  CopyOutlined,
+} from '@ant-design/icons';
 import ChatPanel from '../ChatPanel';
 import { db } from '../../db';
+
+const { Text } = Typography;
 
 interface DraftingRoomProps {
   project: Project;
@@ -36,6 +48,7 @@ interface DraftingRoomProps {
   handleChapterChatSend: (userText: string, extraSkillTextOverride?: string) => void;
   handleClearChapterChat: () => void;
   handleUseReviewSuggestion: (reviewContent: string) => void;
+  onPause: () => void;
   renderTaskControl: TaskControlRender;
   setEditingOutline: Dispatch<SetStateAction<string>>;
   setChapterExtraSkillKeys: (v: string[]) => void;
@@ -70,6 +83,7 @@ export default function DraftingRoom({
   handleChapterChatSend,
   handleClearChapterChat,
   handleUseReviewSuggestion,
+  onPause,
   renderTaskControl,
   setEditingOutline,
   setChapterExtraSkillKeys,
@@ -78,22 +92,111 @@ export default function DraftingRoom({
   setShowChapterOutlineEditor,
   setViewingChapter,
 }: DraftingRoomProps) {
+  // ── Skill 选择 Popover 内容 ──
+  const skillPopoverContent = (
+    <div style={{ minWidth: 200 }}>
+      <Space direction="vertical" size={4} style={{ width: '100%' }}>
+        {skills
+          .filter((s) => !['workflow', 'blurb'].includes(s.key))
+          .map((s) => (
+            <Checkbox
+              key={s.key}
+              checked={chapterExtraSkillKeys.includes(s.key)}
+              onChange={(e) => {
+                setChapterExtraSkillKeys(
+                  e.target.checked
+                    ? [...chapterExtraSkillKeys, s.key]
+                    : chapterExtraSkillKeys.filter((k: string) => k !== s.key),
+                );
+              }}
+            >
+              <span style={{ fontSize: 11 }}>{s.name}</span>
+            </Checkbox>
+          ))}
+        <div
+          style={{
+            borderTop: '1px solid #eaeaea',
+            paddingTop: 6,
+            marginTop: 4,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
+              fontSize: 10,
+              color: '#888888',
+              fontWeight: 700,
+              cursor: 'pointer',
+            }}
+          >
+            <UploadOutlined style={{ fontSize: 9 }} /> 上传临时 Skill
+            <input
+              type="file"
+              accept=".txt,.md"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) =>
+                  setChapterExtraSkillText((ev.target?.result as string) || '');
+                reader.readAsText(file, 'utf-8');
+                e.target.value = '';
+                setShowChapterSkillPopover(false);
+              }}
+            />
+          </label>
+          {chapterExtraSkillKeys.length > 0 && (
+            <span style={{ fontSize: 9, color: '#000000', fontWeight: 700 }}>
+              {chapterExtraSkillKeys.length} 已选
+            </span>
+          )}
+        </div>
+      </Space>
+    </div>
+  );
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-      {/* Chapter selector sidebar */}
-      <div className="xl:col-span-1 border border-rule bg-paper-50 p-4 flex flex-col justify-between h-[calc(100vh-240px)] overflow-y-auto space-y-4">
+      {/* ── Chapter selector sidebar ── */}
+      <div
+        className="xl:col-span-1 flex flex-col justify-between overflow-y-auto"
+        style={{
+          border: '1px solid #eaeaea',
+          background: '#f9f9f9',
+          padding: 16,
+          height: 'calc(100vh - 240px)',
+        }}
+      >
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <h3 className="text-xs font-bold text-ink-400 uppercase tracking-widest flex items-center gap-1">
-              <BookOpen size={12} className="text-accent" /> 章节列表
-            </h3>
-            <button
-              onClick={handleCreateNewChapter}
-              className="p-1 hover:bg-accent-faint text-accent hover:text-accent-hover rounded transition border border-rule"
-              title="新建章节"
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                color: '#888888',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                margin: 0,
+              }}
             >
-              <Plus size={14} />
-            </button>
+              <BookOutlined style={{ color: '#000000' }} /> 章节列表
+            </h3>
+            <Button
+              size="small"
+              type="text"
+              icon={<PlusOutlined />}
+              onClick={handleCreateNewChapter}
+              title="新建章节"
+            />
           </div>
 
           <div className="space-y-1">
@@ -103,30 +206,54 @@ export default function DraftingRoom({
                 onClick={() => handleSelectChapter(ch)}
                 className={`w-full text-left px-3 py-2 text-xs font-semibold border-l-2 flex items-center justify-between transition ${
                   activeChapterId === ch.id
-                    ? 'border-accent text-accent bg-accent-faint font-bold'
-                    : 'border-transparent text-ink-500 hover:bg-paper-100 hover:text-ink'
+                    ? 'border-black text-black bg-[#f5f5f5] font-bold'
+                    : 'border-transparent text-[#696b72] hover:bg-[#f5f5f5] hover:text-[#171717]'
                 }`}
               >
-                <span>第 {ch.chapterNumber} 章: {ch.title.split(':').pop()?.trim()}</span>
-                <div className="flex items-center gap-1.5">
+                <span>
+                  第 {ch.chapterNumber} 章: {ch.title.split(':').pop()?.trim()}
+                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   {ch.content && (
-                    <button
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<EyeOutlined style={{ fontSize: 11 }} />}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setViewingChapter({ title: ch.title || `第 ${ch.chapterNumber} 章`, content: ch.content! });
+                        setViewingChapter({
+                          title: ch.title || `第 ${ch.chapterNumber} 章`,
+                          content: ch.content!,
+                        });
                       }}
                       title="查看原文"
-                      className="p-0.5 text-ink-400 hover:text-accent transition"
-                    >
-                      <Eye size={11} />
-                    </button>
+                      style={{ padding: 0, minWidth: 'auto', height: 'auto' }}
+                    />
                   )}
                   {ch.content ? (
-                    <span className="text-[9px] px-1.5 py-0.5 bg-grove-light font-bold border border-grove/30 text-grove">
+                    <span
+                      style={{
+                        fontSize: 9,
+                        padding: '1px 6px',
+                        background: '#ddf3e4',
+                        fontWeight: 700,
+                        border: '1px solid rgba(0,166,62,0.3)',
+                        color: '#00a63e',
+                      }}
+                    >
                       {ch.content.length} words
                     </span>
                   ) : (
-                    <span className="text-[9px] px-1.5 py-0.5 bg-paper-100 font-bold text-ink-400 border border-rule">
+                    <span
+                      style={{
+                        fontSize: 9,
+                        padding: '1px 6px',
+                        background: '#f5f5f5',
+                        fontWeight: 700,
+                        color: '#888888',
+                        border: '1px solid #eaeaea',
+                      }}
+                    >
                       empty
                     </span>
                   )}
@@ -137,41 +264,54 @@ export default function DraftingRoom({
         </div>
 
         {chapters.length === 0 && (
-          <div className="text-center py-6 text-ink-400 space-y-2 border border-rule border-dashed bg-paper">
-            <p className="text-[10px]">还没有章节。</p>
-            <button
-              type="button"
-              onClick={handleCreateNewChapter}
-              className="text-[10px] font-semibold text-accent hover:text-accent-hover underline"
-            >
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '24px 0',
+              color: '#888888',
+              border: '1px dashed #eaeaea',
+              background: '#f5f5f5',
+            }}
+          >
+            <p style={{ fontSize: 10, margin: '0 0 8px' }}>还没有章节。</p>
+            <Button type="link" size="small" onClick={handleCreateNewChapter}>
               添加第一章
-            </button>
+            </Button>
           </div>
         )}
       </div>
 
-      {/* ChatPanel area */}
+      {/* ── ChatPanel area ── */}
       <div className="xl:col-span-3 space-y-3">
         {/* Grease warnings */}
         {greaseWarnings.length > 0 && (
-          <div className="bg-accent-pale border border-accent/40 p-3 space-y-1.5">
-            <div className="flex items-center gap-2 text-accent text-xs font-bold">
-              <AlertTriangle size={13} /> 去油警告
-            </div>
-            <ul className="space-y-0.5">
-              {greaseWarnings.map((warn, i) => (
-                <li key={i} className="text-[10px] text-ink font-semibold before:content-['•'] before:text-accent before:mr-1">{warn}</li>
-              ))}
-            </ul>
-          </div>
+          <Alert
+            type="warning"
+            icon={<ExclamationCircleOutlined />}
+            message={
+              <span style={{ fontSize: 12, fontWeight: 700 }}>去油警告</span>
+            }
+            description={
+              <ul style={{ margin: 0, paddingLeft: 16 }}>
+                {greaseWarnings.map((warn, i) => (
+                  <li key={i} style={{ fontSize: 10, fontWeight: 600 }}>
+                    {warn}
+                  </li>
+                ))}
+              </ul>
+            }
+            style={{ background: '#fef2f2', border: '1px solid rgba(238,0,0,0.3)' }}
+          />
         )}
 
         {/* Chapter error */}
         {chapterError && activeTask !== 'chapter' && (
-          <div className="flex items-start gap-2 bg-red-50 border border-red-200 p-2.5 text-[10px] text-red-700">
-            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
-            <span>{chapterError}</span>
-          </div>
+          <Alert
+            type="error"
+            message={chapterError}
+            icon={<ExclamationCircleOutlined />}
+            style={{ fontSize: 10 }}
+          />
         )}
 
         {activeChapterId !== null ? (
@@ -182,223 +322,208 @@ export default function DraftingRoom({
             streamingLabel={activeTask === 'chapter' ? '生成正文中...' : '逻辑审查中...'}
             onSend={handleChapterChatSend}
             onClear={handleClearChapterChat}
+            onPause={onPause}
             onUseReviewSuggestion={handleUseReviewSuggestion}
             placeholder="输入重写建议后按 Enter 发送，或点击上方按钮直接生成正文..."
             toolbar={
-              <>
-                <button
+              <Space size={6} wrap>
+                <Button
+                  size="small"
+                  icon={<SaveOutlined />}
                   onClick={handleSaveChapterManual}
-                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <Save size={10} /> 保存草稿
-                </button>
+                  保存草稿
+                </Button>
 
-                <button
+                <Button
+                  size="small"
+                  icon={<DownloadOutlined />}
                   onClick={() => {
-                    const ch = chapters.find(c => c.id === activeChapterId);
+                    const ch = chapters.find((c) => c.id === activeChapterId);
                     if (ch) handleExportChapterMarkdown(ch);
                   }}
-                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <Download size={10} /> 导出单章
-                </button>
+                  导出单章
+                </Button>
 
-                <button
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={
+                    <ThunderboltOutlined
+                      spin={activeTask === 'chapter' && isGenerating}
+                    />
+                  }
                   disabled={isGenerating}
                   onClick={() => handleChapterChatSend('')}
-                  className="flex items-center gap-1 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <Sparkles size={10} className={activeTask === 'chapter' && isGenerating ? 'animate-spin' : ''} />
-                  {chapters.find(c => c.id === activeChapterId)?.content ? '重新生成' : '生成正文'}
-                </button>
+                  {chapters.find((c) => c.id === activeChapterId)?.content
+                    ? '重新生成'
+                    : '生成正文'}
+                </Button>
                 {renderTaskControl('chapter', () => handleGenerateChapterStream(true))}
 
-                <button
+                <Button
+                  size="small"
+                  icon={
+                    <AuditOutlined
+                      spin={activeTask === 'review' && isGenerating}
+                    />
+                  }
                   disabled={isGenerating}
                   onClick={() => {
-                    const ch = chapters.find(c => c.id === activeChapterId);
+                    const ch = chapters.find((c) => c.id === activeChapterId);
                     if (ch) handleLogicReviewChapter(ch);
                   }}
-                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <FileSearch size={10} className={activeTask === 'review' && isGenerating ? 'animate-spin' : ''} />
                   逻辑审查
-                </button>
+                </Button>
                 {renderTaskControl('review', () => {
-                  const ch = chapters.find(c => c.id === activeChapterId);
+                  const ch = chapters.find((c) => c.id === activeChapterId);
                   if (ch) handleLogicReviewChapter(ch, true);
                 })}
 
-                <button
+                <Button
+                  size="small"
+                  icon={<ThunderboltOutlined />}
                   disabled={isGenerating}
                   onClick={() => {
-                    const slapContent = skills.find(s => s.key === 'female_slap')?.content || '';
+                    const slapContent =
+                      skills.find((s) => s.key === 'female_slap')?.content || '';
                     handleChapterChatSend('按打脸闭环风格重新生成本章', slapContent);
                   }}
-                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 disabled:opacity-50 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <Sparkles size={10} /> 打脸闭环
-                </button>
+                  打脸闭环
+                </Button>
 
-                <div className="relative">
-                  <button
-                    onClick={() => setShowChapterSkillPopover(v => !v)}
-                    className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
-                  >
-                    <Layers size={10} /> 选择 Skill {showChapterSkillPopover ? '▴' : '▾'}
-                  </button>
-                  {showChapterSkillPopover && (
-                    <div className="absolute bottom-full mb-1 left-0 z-20 bg-paper border border-rule shadow-lg p-2 min-w-[200px] space-y-1">
-                      {skills.filter(s => !['workflow', 'blurb'].includes(s.key)).map(s => (
-                        <label key={s.key} className="flex items-center gap-2 text-[10px] text-ink cursor-pointer py-0.5 hover:bg-paper-100 px-1">
-                          <input
-                            type="checkbox"
-                            checked={chapterExtraSkillKeys.includes(s.key)}
-                            onChange={(e) => {
-                              setChapterExtraSkillKeys(e.target.checked
-                                ? [...chapterExtraSkillKeys, s.key]
-                                : chapterExtraSkillKeys.filter(k => k !== s.key));
-                            }}
-                            className="accent-[#9b2d20] shrink-0"
-                          />
-                          <span className="truncate">{s.name}</span>
-                        </label>
-                      ))}
-                      <div className="pt-1 border-t border-rule mt-1">
-                        <label className="flex items-center gap-1 text-[10px] text-ink-400 font-bold cursor-pointer hover:bg-paper-100 px-1">
-                          <FileUp size={9} /> 上传临时 Skill
-                          <input
-                            type="file"
-                            accept=".txt,.md"
-                            className="hidden"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              const reader = new FileReader();
-                              reader.onload = (ev) => setChapterExtraSkillText(ev.target?.result as string || '');
-                              reader.readAsText(file, 'utf-8');
-                              e.target.value = '';
-                              setShowChapterSkillPopover(false);
-                            }}
-                          />
-                        </label>
-                        {chapterExtraSkillKeys.length > 0 && (
-                          <span className="text-[9px] text-accent font-bold px-1">{chapterExtraSkillKeys.length} 已选</span>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                <Popover
+                  content={skillPopoverContent}
+                  title="选择 Skill"
+                  trigger="click"
+                  open={showChapterSkillPopover}
+                  onOpenChange={setShowChapterSkillPopover}
+                  placement="topLeft"
+                >
+                  <Button size="small" icon={<AppstoreOutlined />}>
+                    选择 Skill
+                  </Button>
+                </Popover>
 
-                <button
+                <Button
+                  size="small"
+                  icon={<EditOutlined />}
                   onClick={() => setShowChapterOutlineEditor(true)}
-                  className="flex items-center gap-1 bg-paper border border-rule hover:bg-paper-100 text-ink-500 text-[10px] font-bold px-2.5 py-1.5 transition"
                 >
-                  <Edit3 size={10} /> 章节大纲
-                </button>
-              </>
+                  章节大纲
+                </Button>
+              </Space>
             }
           />
         ) : (
-          <div className="bg-paper border border-rule border-dashed flex flex-col items-center justify-center text-center space-y-3 h-[calc(100vh-240px)]" style={{ minHeight: 480 }}>
-            <Edit3 className="text-ink-300" size={32} />
-            <h4 className="font-bold text-ink text-sm">请选择章节</h4>
-            <p className="text-ink-400 text-xs max-w-xs">从左侧列表选择一个章节，或新建章节开始写作。</p>
-            <button
-              onClick={handleCreateNewChapter}
-              className="border border-rule bg-paper hover:bg-paper-100 text-ink-500 font-semibold px-4 py-1.5 text-xs"
-            >
+          <div
+            className="bg-white border border-[#eaeaea] border-dashed flex flex-col items-center justify-center text-center space-y-3"
+            style={{ height: 'calc(100vh - 240px)', minHeight: 480 }}
+          >
+            <EditOutlined style={{ fontSize: 32, color: '#d4d4d4' }} />
+            <h4 className="font-bold text-[#171717] text-sm">请选择章节</h4>
+            <p className="text-[#888888] text-xs max-w-xs">
+              从左侧列表选择一个章节，或新建章节开始写作。
+            </p>
+            <Button size="small" onClick={handleCreateNewChapter}>
               新建章节
-            </button>
+            </Button>
           </div>
         )}
       </div>
 
-      {/* Chapter outline editor modal */}
-      {showChapterOutlineEditor && activeChapterId !== null && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setShowChapterOutlineEditor(false)}
-        >
-          <div
-            className="bg-paper border border-rule shadow-xl flex flex-col w-full max-w-2xl mx-4"
-            style={{ maxHeight: '80vh' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-rule shrink-0">
-              <h2 className="text-sm font-black font-display text-ink">本章大纲要求</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={async () => {
-                    const ch = chapters.find(c => c.id === activeChapterId);
-                    if (ch?.id) await db.chapters.update(ch.id, { outlineSection: editingOutline });
-                    setShowChapterOutlineEditor(false);
-                  }}
-                  className="flex items-center gap-1 text-[10px] font-bold text-white bg-accent hover:bg-accent-hover px-3 py-1 transition"
-                >
-                  保存
-                </button>
-                <button
-                  onClick={() => setShowChapterOutlineEditor(false)}
-                  className="text-ink-400 hover:text-ink p-1 transition"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 min-h-0">
-              <textarea
-                value={editingOutline}
-                onChange={(e) => setEditingOutline(e.target.value)}
-                className="w-full h-full bg-paper border border-rule p-3 font-mono text-[11px] text-ink focus:outline-none focus:border-accent leading-relaxed resize-none"
-                style={{ minHeight: '320px' }}
-                placeholder="将本章大纲片段粘贴在此..."
-                autoFocus
-              />
-            </div>
-            <div className="px-4 py-2 border-t border-rule shrink-0 text-[10px] text-ink-400">
-              内容将在关闭前点击"保存"时写入数据库，生成正文时作为参考。
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ── Chapter outline editor modal ── */}
+      <Modal
+        title="本章大纲要求"
+        open={showChapterOutlineEditor && activeChapterId !== null}
+        onCancel={() => setShowChapterOutlineEditor(false)}
+        width={640}
+        footer={
+          <Space>
+            <Button onClick={() => setShowChapterOutlineEditor(false)}>取消</Button>
+            <Button
+              type="primary"
+              onClick={async () => {
+                const ch = chapters.find((c) => c.id === activeChapterId);
+                if (ch?.id) await db.chapters.update(ch.id, { outlineSection: editingOutline });
+                setShowChapterOutlineEditor(false);
+              }}
+            >
+              保存
+            </Button>
+          </Space>
+        }
+      >
+        <textarea
+          value={editingOutline}
+          onChange={(e) => setEditingOutline(e.target.value)}
+          style={{
+            width: '100%',
+            minHeight: 320,
+            background: '#f5f5f5',
+            border: '1px solid #eaeaea',
+            padding: 12,
+            fontFamily: "'JetBrains Mono', Consolas, monospace",
+            fontSize: 11,
+            color: '#171717',
+            lineHeight: 1.6,
+            resize: 'none',
+            outline: 'none',
+          }}
+          placeholder="将本章大纲片段粘贴在此..."
+          autoFocus
+        />
+        <Text type="secondary" style={{ fontSize: 10 }}>
+          内容将在关闭前点击"保存"时写入数据库，生成正文时作为参考。
+        </Text>
+      </Modal>
 
-      {/* Chapter content viewer modal */}
-      {viewingChapter && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-          onClick={() => setViewingChapter(null)}
-        >
-          <div
-            className="bg-paper border border-rule shadow-xl flex flex-col w-full max-w-2xl mx-4" style={{ maxHeight: '80vh' }}
-            onClick={(e) => e.stopPropagation()}
+      {/* ── Chapter content viewer modal ── */}
+      <Modal
+        title={viewingChapter?.title || ''}
+        open={!!viewingChapter}
+        onCancel={() => setViewingChapter(null)}
+        width={640}
+        footer={
+          <Space>
+            <Button
+              icon={<CopyOutlined />}
+              onClick={() => {
+                if (viewingChapter) {
+                  navigator.clipboard
+                    .writeText(viewingChapter.content)
+                    .then(() => alert('已复制！'));
+                }
+              }}
+            >
+              复制
+            </Button>
+            <Button onClick={() => setViewingChapter(null)}>关闭</Button>
+          </Space>
+        }
+      >
+        <div style={{ maxHeight: '60vh', overflow: 'auto' }}>
+          <pre
+            style={{
+              fontFamily: "'JetBrains Mono', Consolas, monospace",
+              fontSize: 12,
+              color: '#171717',
+              lineHeight: 1.6,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
           >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-rule shrink-0">
-              <h2 className="text-sm font-black font-display text-ink">{viewingChapter.title}</h2>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => navigator.clipboard.writeText(viewingChapter.content).then(() => alert('已复制！'))}
-                  className="flex items-center gap-1 text-[10px] text-ink-400 hover:text-ink border border-rule px-2 py-1 bg-paper hover:bg-paper-100 transition"
-                >
-                  复制
-                </button>
-                <button
-                  onClick={() => setViewingChapter(null)}
-                  className="text-ink-400 hover:text-ink p-1 transition"
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto p-5">
-              <pre className="font-mono text-xs text-ink leading-relaxed whitespace-pre-wrap break-words">{viewingChapter.content}</pre>
-            </div>
-            <div className="px-4 py-2 border-t border-rule shrink-0">
-              <span className="text-[10px] text-ink-400">{viewingChapter.content.length} 字符</span>
-            </div>
-          </div>
+            {viewingChapter?.content}
+          </pre>
         </div>
-      )}
+        <Text type="secondary" style={{ fontSize: 10 }}>
+          {viewingChapter?.content.length} 字符
+        </Text>
+      </Modal>
     </div>
   );
 }

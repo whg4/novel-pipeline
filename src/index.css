@@ -4,22 +4,70 @@
 
 @layer base {
   body {
-    @apply bg-paper text-ink antialiased;
+    @apply bg-white text-[#171717] antialiased;
   }
 }
 
-/* Custom Scrollbar */
+/* Custom Scrollbar — Vercel Geist 风格滚动条 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #ede8e3;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #c2b9b3;
-  border-radius: 2px;
+  background: #d4d4d4;
+  border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9a8f87;
+  background: #888888;
+}
+
+/* antd Bubble.List 内部滚动条统一 */
+.ant-bubble-list ::-webkit-scrollbar {
+  width: 6px;
+}
+.ant-bubble-list ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.ant-bubble-list ::-webkit-scrollbar-thumb {
+  background: #d4d4d4;
+  border-radius: 3px;
+}
+
+/* antd Sender 输入框字体与项目一致 */
+.ant-sender textarea {
+  font-family: 'Geist Mono', 'SF Mono', 'JetBrains Mono', Consolas, monospace !important;
+  font-size: 13px !important;
+}
+
+/* x-markdown 渲染内容的基础排版 */
+.xmarkdown-container {
+  line-height: 1.7;
+  font-size: 13px;
+  color: #171717;
+}
+.xmarkdown-container h1,
+.xmarkdown-container h2,
+.xmarkdown-container h3 {
+  margin-top: 12px;
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+.xmarkdown-container ul,
+.xmarkdown-container ol {
+  padding-left: 20px;
+}
+.xmarkdown-container code {
+  background: #f5f5f5;
+  border: 1px solid #eaeaea;
+  padding: 0 4px;
+  border-radius: 4px;
+  font-family: 'Geist Mono', 'SF Mono', 'JetBrains Mono', Consolas, monospace;
+  font-size: 10px;
+}
+.xmarkdown-container hr {
+  border-color: #eaeaea;
+  margin: 8px 0;
 }

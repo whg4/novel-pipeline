@@ -61,26 +61,26 @@ export default function StageModelView() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center gap-3 border-b-2 border-ink pb-4">
-        <div className="bg-accent-faint p-2 border border-accent/20">
-          <Cpu className="text-accent" size={24} />
+      <div className="flex items-center gap-3 border-b border-[#171717] pb-4">
+        <div className="bg-[#f5f5f5] p-2 border border-accent/20">
+          <Cpu className="text-black" size={24} />
         </div>
         <div>
-          <h1 className="text-xl font-black font-display">阶段模型</h1>
-          <p className="text-ink-500 text-xs">
+          <h1 className="text-xl font-black font-sans">阶段模型</h1>
+          <p className="text-[#696b72] text-xs">
             为大纲、正文、审查和营销分别指定供应商与模型。API Key 仍在“模型连接”中按供应商独立配置。
           </p>
         </div>
       </div>
 
       {savedMessage && (
-        <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-grove bg-grove-light border border-grove/40 px-3 py-1.5">
+        <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#00a63e] bg-[#ddf3e4] border border-grove/40 px-3 py-1.5">
           <Check size={14} /> {savedMessage}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        <div className="lg:col-span-1 bg-paper-50 border border-rule p-3 space-y-2">
+        <div className="lg:col-span-1 bg-[#f9f9f9] border border-[#eaeaea] p-3 space-y-2">
           {STAGE_MODEL_ITEMS.map((item) => {
             const preset = getProviderPreset(stageAssignments[item.stage]);
             const isActive = activeStageTab === item.stage;
@@ -91,17 +91,17 @@ export default function StageModelView() {
                 onClick={() => setActiveStageTab(item.stage)}
                 className={`w-full text-left border px-3 py-3 transition ${
                   isActive
-                    ? 'bg-accent text-white border-accent'
-                    : 'bg-paper text-ink-500 border-rule hover:text-ink hover:border-rule-dark'
+                    ? 'bg-black text-white border-accent'
+                    : 'bg-white text-[#696b72] border-[#eaeaea] hover:text-[#171717] hover:border-[#d4d4d4]'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-sm font-bold">{item.label}</span>
-                  <span className={`text-[10px] font-mono ${isActive ? 'text-white/80' : 'text-accent'}`}>
+                  <span className={`text-[10px] font-mono ${isActive ? 'text-white/80' : 'text-black'}`}>
                     {preset.shortName}
                   </span>
                 </div>
-                <p className={`text-[10px] mt-1 leading-relaxed ${isActive ? 'text-white/70' : 'text-ink-400'}`}>
+                <p className={`text-[10px] mt-1 leading-relaxed ${isActive ? 'text-white/70' : 'text-[#888888]'}`}>
                   {item.description}
                 </p>
               </button>
@@ -109,15 +109,15 @@ export default function StageModelView() {
           })}
         </div>
 
-        <div className="lg:col-span-3 bg-paper-50 border border-rule p-6 space-y-5">
+        <div className="lg:col-span-3 bg-[#f9f9f9] border border-[#eaeaea] p-6 space-y-5">
           <div className="flex items-start justify-between gap-4 flex-wrap">
             <div>
-              <div className="text-xs font-bold text-ink flex items-center gap-1.5">
-                <Server size={14} className="text-accent" /> {activeItem.label}阶段
+              <div className="text-xs font-bold text-[#171717] flex items-center gap-1.5">
+                <Server size={14} className="text-black" /> {activeItem.label}阶段
               </div>
-              <p className="text-xs text-ink-500 mt-1">{activeItem.description}</p>
+              <p className="text-xs text-[#696b72] mt-1">{activeItem.description}</p>
             </div>
-            <span className="text-[10px] text-ink-400 bg-paper border border-rule px-2 py-1 font-semibold">
+            <span className="text-[10px] text-[#888888] bg-white border border-[#eaeaea] px-2 py-1 font-semibold">
               配置会立即保存到本地
             </span>
           </div>
@@ -135,7 +135,7 @@ export default function StageModelView() {
               <select
                 value={activeProvider}
                 onChange={(event) => handleStageProviderChange(activeStageTab, event.target.value as LLMProviderId)}
-                className="w-full bg-paper-50 border border-rule px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-accent/50"
+                className="w-full bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm text-[#171717] focus:outline-none focus:ring-2 focus:ring-black/50"
               >
                 {PROVIDER_PRESETS.map(provider => (
                   <option key={provider.id} value={provider.id}>
@@ -151,13 +151,13 @@ export default function StageModelView() {
                 type="text"
                 value={activeConfig.model}
                 onChange={(event) => handleStageModelChange(activeStageTab, event.target.value)}
-                className="w-full bg-paper-50 border border-rule px-3 py-2 text-sm text-ink font-mono focus:outline-none focus:ring-2 focus:ring-accent/50"
+                className="w-full bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm text-[#171717] font-mono focus:outline-none focus:ring-2 focus:ring-black/50"
               />
             </div>
           </div>
 
           <div className="space-y-2">
-            <div className="text-xs font-bold text-ink-400 uppercase tracking-wider">{activePreset.shortName} 常用模型</div>
+            <div className="text-xs font-bold text-[#888888] uppercase tracking-wider">{activePreset.shortName} 常用模型</div>
             <div className="flex flex-wrap gap-2">
               {activePreset.modelSuggestions.map(model => (
                 <button
@@ -166,8 +166,8 @@ export default function StageModelView() {
                   onClick={() => handleStageModelChange(activeStageTab, model)}
                   className={`text-[11px] font-semibold px-2.5 py-1 border transition ${
                     activeConfig.model === model
-                      ? 'bg-accent border-accent text-white'
-                      : 'bg-paper border-rule text-ink-500 hover:text-ink hover:border-rule-dark'
+                      ? 'bg-black border-accent text-white'
+                      : 'bg-white border-[#eaeaea] text-[#696b72] hover:text-[#171717] hover:border-[#d4d4d4]'
                   }`}
                 >
                   {model}

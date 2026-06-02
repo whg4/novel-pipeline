@@ -1,5 +1,7 @@
 import { Routes, Route, NavLink, useNavigate, useParams, Navigate, useLocation } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { ConfigProvider } from 'antd';
+import { XProvider } from '@ant-design/x';
 import { db } from './db';
 import type { Project } from './types';
 import DashboardView from './views/DashboardView';
@@ -10,6 +12,41 @@ import StageModelView from './views/StageModelView';
 import {
   BookOpen, Layers, BookMarked, Sliders, Key, Heart, Cpu
 } from 'lucide-react';
+
+// ── Ant Design 主题配置：Vercel Geist 浅色模式 ────────────────────
+const antdTheme = {
+  token: {
+    colorPrimary: '#000000',
+    colorPrimaryHover: '#333333',
+    colorPrimaryActive: '#000000',
+    colorBgContainer: '#ffffff',
+    colorBgLayout: '#f9f9f9',
+    colorBgElevated: '#ffffff',
+    colorBorder: '#eaeaea',
+    colorBorderSecondary: '#f0f0f0',
+    colorText: '#171717',
+    colorTextSecondary: '#696b72',
+    colorTextTertiary: '#888888',
+    colorTextQuaternary: '#d4d4d4',
+    colorError: '#ee0000',
+    colorSuccess: '#00a63e',
+    colorWarning: '#f5a623',
+    fontFamily: "'Geist', 'Inter', 'Noto Sans SC', system-ui, sans-serif",
+    borderRadius: 6,
+    controlHeight: 32,
+    fontSize: 12,
+  },
+  components: {
+    Button: {
+      colorPrimary: '#000000',
+      colorPrimaryHover: '#333333',
+      colorPrimaryActive: '#000000',
+      borderRadius: 6,
+      controlHeight: 28,
+      fontSize: 12,
+    },
+  },
+};
 
 // ── Wrapper that reads :projectId from URL and renders PipelineView ──────────
 function PipelineRoute() {
@@ -46,17 +83,17 @@ function Shell() {
   };
 
   return (
-    <div className="flex min-h-screen bg-paper text-ink flex-col md:flex-row">
+    <div className="flex min-h-screen bg-white text-[#171717] flex-col md:flex-row">
       {/* Sidebar */}
-      <aside className="w-full md:w-52 bg-paper-50 border-b md:border-b-0 md:border-r border-rule flex flex-col justify-between shrink-0 select-none">
+      <aside className="w-full md:w-52 bg-[#f9f9f9] border-b md:border-b-0 md:border-r border-[#eaeaea] flex flex-col justify-between shrink-0 select-none">
         <div className="p-5 space-y-8">
           {/* Logo */}
-          <div className="pb-5 border-b-2 border-ink">
+          <div className="pb-5 border-b border-[#171717]">
             <div className="flex items-center gap-2 mb-2">
-              <BookMarked size={14} className="text-accent" />
-              <span className="text-[9px] font-bold text-ink-400 tracking-[0.2em] uppercase">小说流水线</span>
+              <BookMarked size={14} className="text-black" />
+              <span className="text-[9px] font-bold text-[#888888] tracking-[0.2em] uppercase">小说流水线</span>
             </div>
-            <h1 className="font-display text-2xl font-black text-ink leading-none">创作工作台</h1>
+            <h1 className="font-sans text-2xl font-black text-[#171717] leading-none">创作工作台</h1>
           </div>
 
           {/* Nav */}
@@ -69,12 +106,12 @@ function Shell() {
                 className={({ isActive }) =>
                   `w-full flex items-center gap-3 py-2.5 text-left transition-all text-xs ${
                     isActive
-                      ? 'text-accent font-bold border-l-2 border-accent pl-3'
-                      : 'text-ink-500 hover:text-ink pl-3.5 border-l-2 border-transparent'
+                      ? 'text-black font-bold border-l-2 border-black pl-3'
+                      : 'text-[#696b72] hover:text-[#171717] pl-3.5 border-l-2 border-transparent'
                   }`
                 }
               >
-                <span className="text-[9px] font-mono font-bold text-ink-400 w-5 shrink-0">{item.num}</span>
+                <span className="text-[9px] font-mono font-bold text-[#888888] w-5 shrink-0">{item.num}</span>
                 {item.icon}
                 <span>{item.label}</span>
               </NavLink>
@@ -87,15 +124,15 @@ function Shell() {
                 className={({ isActive }) =>
                   `w-full flex items-center gap-3 py-2.5 text-left transition-all text-xs ${
                     isActive
-                      ? 'text-accent font-bold border-l-2 border-accent pl-3'
-                      : 'text-ink-500 hover:text-ink pl-3.5 border-l-2 border-transparent'
+                      ? 'text-black font-bold border-l-2 border-black pl-3'
+                      : 'text-[#696b72] hover:text-[#171717] pl-3.5 border-l-2 border-transparent'
                   }`
                 }
               >
-                <span className="text-[9px] font-mono font-bold text-ink-400 w-5 shrink-0">02</span>
+                <span className="text-[9px] font-mono font-bold text-[#888888] w-5 shrink-0">02</span>
                 <Layers size={14} />
                 <span>创作流水线</span>
-                <span className="ml-auto text-[8px] font-bold bg-accent/10 text-accent px-1.5 py-0.5 border border-accent/20">
+                <span className="ml-auto text-[8px] font-bold bg-[#f5f5f5] text-[#696b72] px-1.5 py-0.5 border border-[#eaeaea]">
                   已选
                 </span>
               </NavLink>
@@ -104,7 +141,7 @@ function Shell() {
                 onClick={() => alert('请先选择或创建一个小说项目。')}
                 className="w-full flex items-center gap-3 py-2.5 text-left transition-all text-xs opacity-40 cursor-not-allowed pl-3.5 border-l-2 border-transparent"
               >
-                <span className="text-[9px] font-mono font-bold text-ink-400 w-5 shrink-0">02</span>
+                <span className="text-[9px] font-mono font-bold text-[#888888] w-5 shrink-0">02</span>
                 <Layers size={14} />
                 <span>创作流水线</span>
               </button>
@@ -113,15 +150,15 @@ function Shell() {
         </div>
 
         {/* Footer */}
-        <div className="p-5 border-t border-rule text-[10px] text-ink-400 space-y-2 font-medium">
+        <div className="p-5 border-t border-[#eaeaea] text-[10px] text-[#888888] space-y-2 font-medium">
           {activeProject && (
-            <div className="bg-accent-faint border border-accent/20 px-2.5 py-2 text-accent text-[10px] font-semibold leading-snug">
+            <div className="bg-[#f5f5f5] border border-[#eaeaea] px-2.5 py-2 text-[#171717] text-[10px] font-semibold leading-snug">
               当前项目：<strong>{activeProject.title}</strong>
             </div>
           )}
           <div className="flex items-center gap-1">
             <span>本地浏览器运行</span>
-            <Heart size={8} className="text-accent fill-current mx-0.5" />
+            <Heart size={8} className="text-black fill-current mx-0.5" />
             <span>多模型适配</span>
           </div>
         </div>
@@ -143,5 +180,11 @@ function Shell() {
 }
 
 export default function App() {
-  return <Shell />;
+  return (
+    <ConfigProvider theme={antdTheme}>
+      <XProvider theme={antdTheme}>
+        <Shell />
+      </XProvider>
+    </ConfigProvider>
+  );
 }
