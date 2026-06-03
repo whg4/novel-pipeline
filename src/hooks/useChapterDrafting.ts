@@ -33,7 +33,7 @@ export function useChapterDrafting(
   const [greaseWarnings, setGreaseWarnings] = useState<string[]>([]);
   const [chapterRegenerationPrompt, setChapterRegenerationPrompt] = useState('');
   const [chapterExtraSkillKeys, setChapterExtraSkillKeys] = useState<string[]>([]);
-  const [chapterExtraSkillText, setChapterExtraSkillText] = useState('');
+  const [chapterExtraSkillTexts, setChapterExtraSkillTexts] = useState<string[]>([]);
   const [logicReviewOutput, setLogicReviewOutput] = useState('');
 
   const { beginGenerationTask, isPausedError, markTaskPaused, finishGenerationTask } = taskControl;
@@ -162,7 +162,7 @@ export function useChapterDrafting(
     let accumulated = resume ? editingDraft : '';
     let wasPaused = false;
     const effectivePrompt = promptOverride !== undefined ? promptOverride : chapterRegenerationPrompt;
-    const effectiveSkillText = extraSkillTextOverride !== undefined ? extraSkillTextOverride : chapterExtraSkillText;
+    const effectiveSkillText = extraSkillTextOverride !== undefined ? extraSkillTextOverride : chapterExtraSkillTexts.join('\n\n');
 
     const prevChapters = chapters.filter(c => c.chapterNumber < (chapters.find(x => x.id === activeChapterId)?.chapterNumber || 0));
 
@@ -343,7 +343,7 @@ export function useChapterDrafting(
     greaseWarnings,
     chapterRegenerationPrompt,
     chapterExtraSkillKeys,
-    chapterExtraSkillText,
+    chapterExtraSkillTexts,
     chapterChatMessages,
     logicReviewOutput,
     handleSelectChapter,
@@ -359,6 +359,6 @@ export function useChapterDrafting(
     handleEditResendChapter,
     handleUseReviewSuggestion,
     setChapterExtraSkillKeys,
-    setChapterExtraSkillText,
+    setChapterExtraSkillTexts,
   };
 }

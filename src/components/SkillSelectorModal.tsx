@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useRef } from 'react';
 import { Modal, Checkbox, Button, Tag, message as antdMessage, Tooltip, Space } from 'antd';
-import { AppstoreOutlined, UploadOutlined, InfoCircleOutlined } from '@ant-design/icons';
+import { AppstoreOutlined, UploadOutlined, InfoCircleOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import type { Skill } from '../types';
 
 interface SkillSelectorModalProps {
@@ -9,16 +9,13 @@ interface SkillSelectorModalProps {
   skills: Skill[];
   selectedKeys: string[];
   onChange: (keys: string[]) => void;
-  extraSkillText: string;
-  onExtraSkillTextChange: (text: string) => void;
-  /** 自动内置的 skill keys（已包含在 prompt 中，不需要用户选择） */
+  extraSkillTexts: string[];
+  onExtraSkillTextsChange: (texts: string[]) => void;
   builtinKeys?: string[];
-  /** 需要从列表中排除的 skill keys（不适用于当前阶段） */
   excludeKeys?: string[];
   title?: string;
 }
 
-// 类别显示配置
 const CATEGORY_CONFIG: Record<string, { label: string; color: string }> = {
   workflow: { label: '工作流', color: '#888888' },
   template: { label: '模板', color: '#1677ff' },
@@ -33,22 +30,19 @@ export default function SkillSelectorModal({
   skills,
   selectedKeys,
   onChange,
-  extraSkillText,
-  onExtraSkillTextChange,
+  extraSkillTexts,
+  onExtraSkillTextsChange,
   builtinKeys = [],
   excludeKeys = [],
   title = '选择 Skill',
 }: SkillSelectorModalProps) {
-  const [showUpload, setShowUpload] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 过滤掉排除项和已内置项，按类别分组
   const availableSkills = skills.filter(
     s => !excludeKeys.includes(s.key) && !builtinKeys.includes(s.key)
   );
-
   const builtinSkills = skills.filter(s => builtinKeys.includes(s.key));
 
-  // 按类别分组
   const grouped = availableSkills.reduce<Record<string, Skill[]>>((acc, skill) => {
     const cat = skill.category || 'rule';
     if (!acc[cat]) acc[cat] = [];
@@ -65,16 +59,30 @@ export default function SkillSelectorModal({
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      onExtraSkillTextChange((ev.target?.result as string) || '');
-      antdMessage.success(`已加载临时 Skill: ${file.name}`);
-      setShowUpload(false);
-    };
-    reader.readAsText(file, 'utf-8');
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    const readPromises = Array.from(files).map(file => {
+      return new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (ev) => resolve((ev.target?.result as string) || '');
+        reader.readAsText(file, 'utf-8');
+      });
+    });
+
+    Promise.all(readPromises).then(texts => {
+      const validTexts = texts.filter(t => t.trim());
+      if (validTexts.length > 0) {
+        onExtraSkillTextsChange([...extraSkillTexts, ...validTexts]);
+        antdMessage.success(`已添加 ${validTexts.length} 个临时 Skill`);
+      }
+    });
+
     e.target.value = '';
+  };
+
+  const handleRemoveOne = (index: number) => {
+    onExtraSkillTextsChange(extraSkillTexts.filter((_, i) => i !== index));
   };
 
   return (
@@ -82,8 +90,10 @@ export default function SkillSelectorModal({
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <AppstoreOutlined /> {title}
-          {selectedKeys.length > 0 && (
-            <Tag color="black" style={{ marginLeft: 4 }}>{selectedKeys.length} 已选</Tag>
+          {(selectedKeys.length + extraSkillTexts.length) > 0 && (
+            <Tag color="black" style={{ marginLeft: 4 }}>
+              {selectedKeys.length + extraSkillTexts.length} 已选
+            </Tag>
           )}
         </div>
       }
@@ -95,16 +105,24 @@ export default function SkillSelectorModal({
           <Button
             icon={<UploadOutlined />}
             size="small"
-            onClick={() => setShowUpload(!showUpload)}
+            onClick={() => fileInputRef.current?.click()}
           >
             上传临时 Skill
           </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".txt,.md"
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleFileUpload}
+          />
           <Button type="primary" onClick={onClose}>完成</Button>
         </div>
       }
     >
       <div style={{ maxHeight: 480, overflowY: 'auto' }}>
-        {/* 已内置的 skill（只读展示） */}
+        {/* 已内置的 skill */}
         {builtinSkills.length > 0 && (
           <div style={{ marginBottom: 16 }}>
             <div style={{
@@ -116,15 +134,67 @@ export default function SkillSelectorModal({
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {builtinSkills.map(s => (
                 <Tooltip key={s.key} title={s.description || s.name}>
-                  <Tag
-                    style={{ fontSize: 11, cursor: 'default' }}
-                  >
+                  <Tag style={{ fontSize: 11, cursor: 'default' }}>
                     {s.name}
                     <InfoCircleOutlined style={{ fontSize: 9, marginLeft: 4, color: '#bbb' }} />
                   </Tag>
                 </Tooltip>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* 临时 Skill 列表 */}
+        {extraSkillTexts.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{
+              fontSize: 10, fontWeight: 700, color: '#fa8c16',
+              textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8,
+              display: 'flex', alignItems: 'center', gap: 4,
+            }}>
+              <span style={{
+                width: 6, height: 6, borderRadius: '50%',
+                background: '#fa8c16', display: 'inline-block',
+              }} />
+              临时 Skill（{extraSkillTexts.length}）
+            </div>
+            <Space direction="vertical" size={6} style={{ width: '100%' }}>
+              {extraSkillTexts.map((text, index) => (
+                <div
+                  key={index}
+                  style={{
+                    display: 'flex', alignItems: 'flex-start', gap: 8,
+                    padding: '8px 10px', borderRadius: 6,
+                    background: '#fff7e6', border: '1px solid #ffe0b2',
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 11, color: '#333', lineHeight: 1.6,
+                      whiteSpace: 'pre-wrap', maxHeight: 80, overflow: 'hidden',
+                    }}>
+                      {text.length > 200 ? text.slice(0, 200) + '...' : text}
+                    </div>
+                    <div style={{ fontSize: 9, color: '#bbb', marginTop: 4 }}>
+                      {text.length} 字
+                    </div>
+                  </div>
+                  <Button
+                    size="small" type="text" danger
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleRemoveOne(index)}
+                    style={{ flexShrink: 0 }}
+                  />
+                </div>
+              ))}
+              <Button
+                size="small" type="dashed" block
+                icon={<PlusOutlined />}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                添加更多
+              </Button>
+            </Space>
           </div>
         )}
 
@@ -179,49 +249,9 @@ export default function SkillSelectorModal({
           );
         })}
 
-        {availableSkills.length === 0 && (
+        {availableSkills.length === 0 && extraSkillTexts.length === 0 && (
           <div style={{ textAlign: 'center', padding: 24, color: '#bbb', fontSize: 12 }}>
-            没有可选的 Skill
-          </div>
-        )}
-
-        {/* 临时 Skill 上传区域 */}
-        {showUpload && (
-          <div style={{
-            borderTop: '1px solid #eaeaea', paddingTop: 12, marginTop: 8,
-          }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: '#888', marginBottom: 8 }}>
-              上传临时 Skill（本次生成有效）
-            </div>
-            {extraSkillText ? (
-              <div style={{
-                background: '#f5f5f5', padding: 8, borderRadius: 6,
-                fontSize: 11, color: '#333', marginBottom: 8,
-                maxHeight: 80, overflow: 'hidden', position: 'relative',
-              }}>
-                {extraSkillText.slice(0, 200)}{extraSkillText.length > 200 ? '...' : ''}
-                <Button
-                  size="small" type="link" danger
-                  style={{ position: 'absolute', top: 4, right: 4, fontSize: 10 }}
-                  onClick={() => onExtraSkillTextChange('')}
-                >
-                  清除
-                </Button>
-              </div>
-            ) : (
-              <label style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                gap: 6, padding: '12px 0', border: '1px dashed #d9d9d9',
-                borderRadius: 6, cursor: 'pointer', fontSize: 11, color: '#888',
-              }}>
-                <UploadOutlined /> 点击上传 .md / .txt 文件
-                <input
-                  type="file" accept=".txt,.md"
-                  style={{ display: 'none' }}
-                  onChange={handleFileUpload}
-                />
-              </label>
-            )}
+            没有可选的 Skill，请上传临时 Skill 或前往 Skill 管理页面创建
           </div>
         )}
       </div>

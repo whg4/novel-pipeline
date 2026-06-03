@@ -28,7 +28,7 @@ interface OutlineStudioProps {
   outlineReviewOutput: string;
   outlineGenerationStatus: string;
   outlineExtraSkillKeys: string[];
-  outlineExtraSkillText: string;
+  outlineExtraSkillTexts: string[];
   showOutlineEditor: boolean;
   showOutlineSkillPopover: boolean;
   showExampleModal: boolean;
@@ -47,7 +47,7 @@ interface OutlineStudioProps {
   setShowOutlineSkillPopover: Dispatch<SetStateAction<boolean>>;
   setShowExampleModal: Dispatch<SetStateAction<boolean>>;
   setOutlineExtraSkillKeys: (v: string[]) => void;
-  setOutlineExtraSkillText: (v: string) => void;
+  setOutlineExtraSkillTexts: (v: string[]) => void;
 }
 
 export default function OutlineStudio({
@@ -60,7 +60,7 @@ export default function OutlineStudio({
   outlineReviewOutput,
   outlineGenerationStatus,
   outlineExtraSkillKeys,
-  outlineExtraSkillText,
+  outlineExtraSkillTexts,
   showOutlineEditor,
   showOutlineSkillPopover,
   showExampleModal,
@@ -79,7 +79,7 @@ export default function OutlineStudio({
   setShowOutlineSkillPopover,
   setShowExampleModal,
   setOutlineExtraSkillKeys,
-  setOutlineExtraSkillText,
+  setOutlineExtraSkillTexts,
 }: OutlineStudioProps) {
   return (
     <div className="space-y-4">
@@ -222,8 +222,8 @@ export default function OutlineStudio({
         skills={skills}
         selectedKeys={outlineExtraSkillKeys}
         onChange={setOutlineExtraSkillKeys}
-        extraSkillText={outlineExtraSkillText}
-        onExtraSkillTextChange={setOutlineExtraSkillText}
+        extraSkillTexts={outlineExtraSkillTexts}
+        onExtraSkillTextsChange={setOutlineExtraSkillTexts}
         builtinKeys={['outline_template', ...(project.genre === 'classic-wolf' ? ['wolf_setting'] : []), ...(project.genre === 'female-slap' ? ['female_slap'] : [])]}
         excludeKeys={['workflow', 'blurb']}
         title="大纲 Skill 选择"

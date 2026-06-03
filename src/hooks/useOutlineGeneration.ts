@@ -28,7 +28,7 @@ export function useOutlineGeneration(
   const [outlineGenerationStatus, setOutlineGenerationStatus] = useState('');
   const [outlineReviewOutput, setOutlineReviewOutput] = useState('');
   const [outlineExtraSkillKeys, setOutlineExtraSkillKeys] = useState<string[]>([]);
-  const [outlineExtraSkillText, setOutlineExtraSkillText] = useState('');
+  const [outlineExtraSkillTexts, setOutlineExtraSkillTexts] = useState<string[]>([]);
 
   const { beginGenerationTask, isPausedError, markTaskPaused, finishGenerationTask } = taskControl;
 
@@ -59,7 +59,7 @@ export function useOutlineGeneration(
         wolfSkill,
         slapSkill,
         outlineExtraSkillKeys,
-        outlineExtraSkillText,
+        outlineExtraSkillTexts.join('\n\n'),
         skills
       );
 
@@ -205,7 +205,7 @@ export function useOutlineGeneration(
         wolfSkill,
         slapSkill,
         extraSkillContents,
-        outlineExtraSkillText,
+        outlineExtraSkillTexts.join('\n\n'),
         project.rawExample || undefined,
       );
 
@@ -252,9 +252,9 @@ export function useOutlineGeneration(
     outlineGenerationStatus,
     outlineReviewOutput,
     outlineExtraSkillKeys,
-    outlineExtraSkillText,
+    outlineExtraSkillTexts,
     setOutlineExtraSkillKeys,
-    setOutlineExtraSkillText,
+    setOutlineExtraSkillTexts,
     handleGenerateOutline,
     handleReviewOutline,
     handleOutlineChatSend,

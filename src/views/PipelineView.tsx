@@ -225,7 +225,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           outlineReviewOutput={outlineHook.outlineReviewOutput}
           outlineGenerationStatus={outlineHook.outlineGenerationStatus}
           outlineExtraSkillKeys={outlineHook.outlineExtraSkillKeys}
-          outlineExtraSkillText={outlineHook.outlineExtraSkillText}
+          outlineExtraSkillTexts={outlineHook.outlineExtraSkillTexts}
           showOutlineEditor={showOutlineEditor}
           showOutlineSkillPopover={showOutlineSkillPopover}
           showExampleModal={showExampleModal}
@@ -244,7 +244,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           setShowOutlineSkillPopover={setShowOutlineSkillPopover}
           setShowExampleModal={setShowExampleModal}
           setOutlineExtraSkillKeys={outlineHook.setOutlineExtraSkillKeys}
-          setOutlineExtraSkillText={outlineHook.setOutlineExtraSkillText}
+          setOutlineExtraSkillTexts={outlineHook.setOutlineExtraSkillTexts}
         />
       )}
 
@@ -264,7 +264,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           logicReviewOutput={chapterDraftHook.logicReviewOutput}
           chapterChatMessages={chapterDraftHook.chapterChatMessages}
           chapterExtraSkillKeys={chapterDraftHook.chapterExtraSkillKeys}
-          chapterExtraSkillText={chapterDraftHook.chapterExtraSkillText}
+          chapterExtraSkillTexts={chapterDraftHook.chapterExtraSkillTexts}
           showChapterSkillPopover={showChapterSkillPopover}
           showChapterOutlineEditor={showChapterOutlineEditor}
           viewingChapter={viewingChapter}
@@ -285,7 +285,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           renderTaskControl={renderTaskControl}
           setEditingOutline={chapterDraftHook.setEditingOutline}
           setChapterExtraSkillKeys={chapterDraftHook.setChapterExtraSkillKeys}
-          setChapterExtraSkillText={chapterDraftHook.setChapterExtraSkillText}
+          setChapterExtraSkillTexts={chapterDraftHook.setChapterExtraSkillTexts}
           setShowChapterSkillPopover={setShowChapterSkillPopover}
           setShowChapterOutlineEditor={setShowChapterOutlineEditor}
           setViewingChapter={setViewingChapter}

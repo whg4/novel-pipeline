@@ -37,7 +37,7 @@ interface DraftingRoomProps {
   logicReviewOutput: string;
   chapterChatMessages: ChatMessage[];
   chapterExtraSkillKeys: string[];
-  chapterExtraSkillText: string;
+  chapterExtraSkillTexts: string[];
   showChapterSkillPopover: boolean;
   showChapterOutlineEditor: boolean;
   viewingChapter: { title: string; content: string } | null;
@@ -58,7 +58,7 @@ interface DraftingRoomProps {
   renderTaskControl: TaskControlRender;
   setEditingOutline: Dispatch<SetStateAction<string>>;
   setChapterExtraSkillKeys: (v: string[]) => void;
-  setChapterExtraSkillText: (v: string) => void;
+  setChapterExtraSkillTexts: (v: string[]) => void;
   setShowChapterSkillPopover: Dispatch<SetStateAction<boolean>>;
   setShowChapterOutlineEditor: Dispatch<SetStateAction<boolean>>;
   setViewingChapter: (v: { title: string; content: string } | null) => void;
@@ -77,7 +77,7 @@ export default function DraftingRoom({
   logicReviewOutput,
   chapterChatMessages,
   chapterExtraSkillKeys,
-  chapterExtraSkillText,
+  chapterExtraSkillTexts,
   showChapterSkillPopover,
   showChapterOutlineEditor,
   viewingChapter,
@@ -98,7 +98,7 @@ export default function DraftingRoom({
   renderTaskControl,
   setEditingOutline,
   setChapterExtraSkillKeys,
-  setChapterExtraSkillText,
+  setChapterExtraSkillTexts,
   setShowChapterSkillPopover,
   setShowChapterOutlineEditor,
   setViewingChapter,
@@ -421,8 +421,8 @@ export default function DraftingRoom({
         skills={skills}
         selectedKeys={chapterExtraSkillKeys}
         onChange={setChapterExtraSkillKeys}
-        extraSkillText={chapterExtraSkillText}
-        onExtraSkillTextChange={setChapterExtraSkillText}
+        extraSkillTexts={chapterExtraSkillTexts}
+        onExtraSkillTextsChange={setChapterExtraSkillTexts}
         builtinKeys={['degrease', 'connect_skills', 'logic_check']}
         excludeKeys={['workflow', 'blurb', 'outline_template']}
         title="章节 Skill 选择"
