@@ -301,6 +301,18 @@ export function useChapterDrafting(
     await db.chatMessages.where('[projectId+scope+chapterId]').equals([projectId, 'chapter', activeChapterId]).delete();
   };
 
+  // 编辑重发：删除该消息及之后的所有消息，用新内容重新发送
+  const handleEditResendChapter = async (messageId: number, newContent: string) => {
+    if (activeChapterId === null) return;
+    const allMsgs = await db.chatMessages
+      .where('[projectId+scope+chapterId]').equals([projectId, 'chapter', activeChapterId]).sortBy('createdAt');
+    const idx = allMsgs.findIndex(m => m.id === messageId);
+    if (idx === -1) return;
+    const toDelete = allMsgs.slice(idx).filter(m => m.id != null).map(m => m.id!);
+    if (toDelete.length > 0) await db.chatMessages.bulkDelete(toDelete);
+    await handleChapterChatSend(newContent);
+  };
+
   const handleUseReviewSuggestion = (reviewContent: string) => {
     // 尝试解析结构化审查结果，提取具体失败项
     const result = parseLogicReviewResult(reviewContent);
@@ -344,6 +356,7 @@ export function useChapterDrafting(
     handleLogicReviewChapter,
     handleChapterChatSend,
     handleClearChapterChat,
+    handleEditResendChapter,
     handleUseReviewSuggestion,
     setChapterExtraSkillKeys,
     setChapterExtraSkillText,

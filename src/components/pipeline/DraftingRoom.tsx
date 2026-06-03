@@ -51,6 +51,8 @@ interface DraftingRoomProps {
   handleChapterChatSend: (userText: string, extraSkillTextOverride?: string) => void;
   handleClearChapterChat: () => void;
   handleUseReviewSuggestion: (reviewContent: string) => void;
+  onRegenerate?: () => void;
+  onEditResend?: (messageId: number, newContent: string) => void;
   onPause: () => void;
   renderTaskControl: TaskControlRender;
   setEditingOutline: Dispatch<SetStateAction<string>>;
@@ -88,6 +90,8 @@ export default function DraftingRoom({
   handleChapterChatSend,
   handleClearChapterChat,
   handleUseReviewSuggestion,
+  onRegenerate,
+  onEditResend,
   onPause,
   renderTaskControl,
   setEditingOutline,
@@ -363,6 +367,8 @@ export default function DraftingRoom({
             onSend={handleChapterChatSend}
             onClear={handleClearChapterChat}
             onPause={onPause}
+            onRegenerate={onRegenerate}
+            onEditResend={onEditResend}
             onUseReviewSuggestion={handleUseReviewSuggestion}
             placeholder="输入重写建议后按 Enter 发送，或点击上方按钮直接生成正文..."
             toolbar={

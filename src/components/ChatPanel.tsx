@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { Bubble, Sender, Welcome } from '@ant-design/x';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { Button, Space, Popconfirm, message as antdMessage, Tooltip } from 'antd';
@@ -8,6 +8,11 @@ import {
   SyncOutlined,
   DeleteOutlined,
   MessageOutlined,
+  EditOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  StopOutlined,
+  ArrowDownOutlined,
 } from '@ant-design/icons';
 import type { ChatMessage } from '../types';
 
@@ -20,12 +25,15 @@ interface ChatPanelProps {
   onSend: (text: string) => void;
   onClear?: () => void;
   onPause?: () => void;
+  onRegenerate?: () => void;
   onUseReviewSuggestion?: (reviewContent: string) => void;
+  onEditResend?: (messageId: number, newContent: string) => void;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
 }
 
+// ── 工具函数 ──
 function exportMd(content: string) {
   const blob = new Blob([content], { type: 'text/markdown;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -36,6 +44,19 @@ function exportMd(content: string) {
   URL.revokeObjectURL(url);
 }
 
+function formatTime(ts: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  if (isToday) return `${hh}:${mm}`;
+  const M = String(d.getMonth() + 1).padStart(2, '0');
+  const D = String(d.getDate()).padStart(2, '0');
+  return `${M}-${D} ${hh}:${mm}`;
+}
+
 const kindLabels: Record<string, string> = {
   outline: '大纲',
   review: '大纲审查',
@@ -43,18 +64,24 @@ const kindLabels: Record<string, string> = {
   'logic-review': '逻辑审查',
 };
 
-// ── AI 消息操作按钮 ──
+// ── AI 消息操作按钮（hover 显示）──
 function MessageActions({
   content,
   kind,
+  isLast,
+  isStreaming,
   onUseReviewSuggestion,
+  onRegenerate,
 }: {
   content: string;
   kind?: string;
+  isLast?: boolean;
+  isStreaming?: boolean;
   onUseReviewSuggestion?: (reviewContent: string) => void;
+  onRegenerate?: () => void;
 }) {
   return (
-    <Space size={4}>
+    <Space size={4} className="chat-actions">
       <Tooltip title="复制">
         <Button
           size="small"
@@ -84,6 +111,52 @@ function MessageActions({
           />
         </Tooltip>
       )}
+      {isLast && !isStreaming && onRegenerate && (
+        <Tooltip title="重新生成">
+          <Button
+            size="small"
+            type="text"
+            icon={<SyncOutlined />}
+            onClick={onRegenerate}
+          />
+        </Tooltip>
+      )}
+    </Space>
+  );
+}
+
+// ── 用户消息操作按钮 ──
+function UserMessageActions({
+  messageId,
+  content,
+  onEditResend,
+}: {
+  messageId?: number;
+  content: string;
+  onEditResend?: (messageId: number, newContent: string) => void;
+}) {
+  return (
+    <Space size={4} className="chat-actions">
+      <Tooltip title="复制">
+        <Button
+          size="small"
+          type="text"
+          icon={<CopyOutlined />}
+          onClick={() => {
+            navigator.clipboard.writeText(content).then(() => antdMessage.success('已复制！'));
+          }}
+        />
+      </Tooltip>
+      {messageId && onEditResend && (
+        <Tooltip title="编辑并重新发送">
+          <Button
+            size="small"
+            type="text"
+            icon={<EditOutlined />}
+            onClick={() => onEditResend(messageId, content)}
+          />
+        </Tooltip>
+      )}
     </Space>
   );
 }
@@ -97,48 +170,134 @@ export default function ChatPanel({
   onSend,
   onClear,
   onPause,
+  onRegenerate,
   onUseReviewSuggestion,
+  onEditResend,
   disabled,
   placeholder,
   className = '',
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editText, setEditText] = useState('');
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // ── 滚动到底部检测 ──
+  const checkScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    setShowScrollBtn(distFromBottom > 200);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    el.addEventListener('scroll', checkScroll, { passive: true });
+    return () => el.removeEventListener('scroll', checkScroll);
+  }, [checkScroll]);
+
+  const scrollToBottom = () => {
+    scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' });
+  };
+
+  // ── 编辑重发逻辑 ──
+  const handleEditStart = (messageId: number, content: string) => {
+    setEditingId(messageId);
+    setEditText(content);
+  };
+
+  const handleEditConfirm = () => {
+    if (editingId && editText.trim() && onEditResend) {
+      onEditResend(editingId, editText.trim());
+      setEditingId(null);
+      setEditText('');
+    }
+  };
+
+  const handleEditCancel = () => {
+    setEditingId(null);
+    setEditText('');
+  };
+
+  // ── 找到最后一条 AI 消息的 id ──
+  const lastAiMsgIndex = [...messages].reverse().findIndex(m => m.role === 'assistant');
+  const lastAiMsgId = lastAiMsgIndex >= 0 ? messages[messages.length - 1 - lastAiMsgIndex]?.id : undefined;
 
   // ── 将 ChatMessage[] 转换为 Bubble.List items 格式 ──
-  const bubbleItems = messages.map((msg) => ({
-    key: msg.id ?? `msg-${msg.createdAt}`,
-    role: msg.role === 'user' ? 'user' : 'ai',
-    content: msg.role === 'user' ? (msg.content || '（触发生成）') : msg.content,
-    placement: msg.role === 'user' ? ('end' as const) : ('start' as const),
-    header:
-      msg.role === 'assistant' && msg.kind ? (
-        <Tooltip title={kindLabels[msg.kind]}>
-          <span
-            style={{
-              fontSize: 9,
-              fontWeight: 700,
-              textTransform: 'uppercase',
-              letterSpacing: '0.1em',
-              color: '#888888',
-              padding: '1px 6px',
-              border: '1px solid #eaeaea',
-              background: '#f5f5f5',
-              display: 'inline-block',
-            }}
-          >
-            {kindLabels[msg.kind]}
-          </span>
-        </Tooltip>
-      ) : undefined,
-    footer:
-      msg.role === 'assistant' ? (
-        <MessageActions
-          content={msg.content}
-          kind={msg.kind}
-          onUseReviewSuggestion={onUseReviewSuggestion}
-        />
-      ) : undefined,
-  }));
+  const bubbleItems = messages.map((msg, idx) => {
+    const isLastAi = msg.role === 'assistant' && msg.id === lastAiMsgId;
+    const isUserMsg = msg.role === 'user';
+    const isEditing = editingId === msg.id;
+
+    return {
+      key: msg.id ?? `msg-${msg.createdAt}-${idx}`,
+      role: isUserMsg ? 'user' : 'ai',
+      content: isUserMsg ? (msg.content || '（触发生成）') : msg.content,
+      placement: isUserMsg ? ('end' as const) : ('start' as const),
+      header:
+        msg.role === 'assistant' && msg.kind ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Tooltip title={kindLabels[msg.kind]}>
+              <span
+                style={{
+                  fontSize: 9,
+                  fontWeight: 700,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.1em',
+                  color: '#888888',
+                  padding: '1px 6px',
+                  border: '1px solid #eaeaea',
+                  background: '#f5f5f5',
+                  display: 'inline-block',
+                }}
+              >
+                {kindLabels[msg.kind]}
+              </span>
+            </Tooltip>
+            <span style={{ fontSize: 9, color: '#bbbbbb' }}>{formatTime(msg.createdAt)}</span>
+          </div>
+        ) : isUserMsg ? (
+          <span style={{ fontSize: 9, color: '#bbbbbb' }}>{formatTime(msg.createdAt)}</span>
+        ) : undefined,
+      footer:
+        isEditing ? (
+          <div style={{ display: 'flex', gap: 4, alignItems: 'center', marginTop: 4 }}>
+            <textarea
+              value={editText}
+              onChange={e => setEditText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleEditConfirm(); }
+                if (e.key === 'Escape') handleEditCancel();
+              }}
+              style={{
+                flex: 1, fontSize: 12, padding: '6px 8px', border: '1px solid #d9d9d9',
+                borderRadius: 6, resize: 'vertical', minHeight: 36, fontFamily: 'inherit',
+              }}
+              autoFocus
+            />
+            <Button size="small" type="primary" icon={<CheckOutlined />} onClick={handleEditConfirm} />
+            <Button size="small" icon={<CloseOutlined />} onClick={handleEditCancel} />
+          </div>
+        ) : msg.role === 'assistant' ? (
+          <MessageActions
+            content={msg.content}
+            kind={msg.kind}
+            isLast={isLastAi}
+            isStreaming={isStreaming}
+            onUseReviewSuggestion={onUseReviewSuggestion}
+            onRegenerate={onRegenerate}
+          />
+        ) : isUserMsg && onEditResend ? (
+          <UserMessageActions
+            messageId={msg.id}
+            content={msg.content}
+            onEditResend={handleEditStart}
+          />
+        ) : undefined,
+    };
+  });
 
   // ── 追加流式气泡 ──
   if (isStreaming) {
@@ -215,10 +374,11 @@ export default function ChatPanel({
         minHeight: 480,
         border: '1px solid #eaeaea',
         background: '#f9f9f9',
+        position: 'relative',
       }}
     >
       {/* ── Messages area ── */}
-      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+      <div ref={scrollContainerRef} style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
         {messages.length === 0 && !isStreaming ? (
           <div
             style={{
@@ -244,6 +404,65 @@ export default function ChatPanel({
           />
         )}
       </div>
+
+      {/* ── 滚动到底部浮动按钮 ── */}
+      {showScrollBtn && (
+        <button
+          onClick={scrollToBottom}
+          style={{
+            position: 'absolute',
+            bottom: 140,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            width: 32,
+            height: 32,
+            borderRadius: '50%',
+            border: '1px solid #d9d9d9',
+            background: '#ffffff',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+            zIndex: 10,
+            transition: 'opacity 0.2s',
+          }}
+        >
+          <ArrowDownOutlined style={{ fontSize: 14, color: '#666' }} />
+        </button>
+      )}
+
+      {/* ── 流式输出时的停止按钮 ── */}
+      {isStreaming && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            padding: '4px 0',
+            background: '#f9f9f9',
+            flexShrink: 0,
+          }}
+        >
+          <button
+            onClick={onPause}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '6px 16px',
+              borderRadius: 20,
+              border: '1px solid #d9d9d9',
+              background: '#ffffff',
+              cursor: 'pointer',
+              fontSize: 12,
+              color: '#666',
+              transition: 'all 0.15s',
+            }}
+          >
+            <StopOutlined style={{ fontSize: 10 }} /> 停止生成
+          </button>
+        </div>
+      )}
 
       {/* ── Toolbar + Input ── */}
       <div
@@ -286,17 +505,29 @@ export default function ChatPanel({
           value={input}
           onChange={setInput}
           onSubmit={(text) => {
+            if (!text.trim()) return;
             onSend(text);
             setInput('');
           }}
-          onCancel={onPause}
           loading={isStreaming}
           disabled={disabled}
-          placeholder={placeholder || '输入消息... (Enter 发送，Shift+Enter 换行)'}
+          placeholder={placeholder || '输入修改意见...'}
           submitType="enter"
-          autoSize={{ minRows: 2, maxRows: 6 }}
+          autoSize={{ minRows: 1, maxRows: 8 }}
         />
       </div>
+
+      {/* ── hover 显隐样式 ── */}
+      <style>{`
+        .chat-actions {
+          opacity: 0;
+          transition: opacity 0.15s ease;
+        }
+        .ant-bubble:hover .chat-actions,
+        .ant-bubble-wrapper:hover .chat-actions {
+          opacity: 1;
+        }
+      `}</style>
     </div>
   );
 }

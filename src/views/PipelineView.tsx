@@ -235,6 +235,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           handleOutlineChatSend={outlineHook.handleOutlineChatSend}
           handleClearOutlineChat={outlineHook.handleClearOutlineChat}
           handleUseOutlineReviewSuggestion={outlineHook.handleUseOutlineReviewSuggestion}
+          onRegenerate={() => outlineHook.handleOutlineChatSend('')}
+          onEditResend={outlineHook.handleEditResendOutline}
           onPause={() => taskCtrl.pauseCurrentTask(autoHook.autoPauseRef)}
           renderTaskControl={renderTaskControl}
           syncOutlineChaptersToDb={syncOutlineChaptersToDb}
@@ -277,6 +279,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           handleChapterChatSend={chapterDraftHook.handleChapterChatSend}
           handleClearChapterChat={chapterDraftHook.handleClearChapterChat}
           handleUseReviewSuggestion={chapterDraftHook.handleUseReviewSuggestion}
+          onRegenerate={() => chapterDraftHook.handleChapterChatSend('')}
+          onEditResend={chapterDraftHook.handleEditResendChapter}
           onPause={() => taskCtrl.pauseCurrentTask(autoHook.autoPauseRef)}
           renderTaskControl={renderTaskControl}
           setEditingOutline={chapterDraftHook.setEditingOutline}

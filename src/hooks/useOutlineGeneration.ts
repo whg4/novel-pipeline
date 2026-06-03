@@ -147,6 +147,17 @@ export function useOutlineGeneration(
     await db.chatMessages.where('[projectId+scope]').equals([projectId, 'outline']).delete();
   };
 
+  // 编辑重发：删除该消息及之后的所有消息，用新内容重新发送
+  const handleEditResendOutline = async (messageId: number, newContent: string) => {
+    const allMsgs = await db.chatMessages
+      .where('[projectId+scope]').equals([projectId, 'outline']).sortBy('createdAt');
+    const idx = allMsgs.findIndex(m => m.id === messageId);
+    if (idx === -1) return;
+    const toDelete = allMsgs.slice(idx).filter(m => m.id != null).map(m => m.id!);
+    if (toDelete.length > 0) await db.chatMessages.bulkDelete(toDelete);
+    await handleOutlineChatSend(newContent);
+  };
+
   // 根据大纲审查建议，使用已有大纲作为上下文重新修订大纲
   const handleUseOutlineReviewSuggestion = async (reviewContent: string) => {
     if (!project?.outline) return;
@@ -231,6 +242,7 @@ export function useOutlineGeneration(
     handleReviewOutline,
     handleOutlineChatSend,
     handleClearOutlineChat,
+    handleEditResendOutline,
     handleUseOutlineReviewSuggestion,
   };
 }
