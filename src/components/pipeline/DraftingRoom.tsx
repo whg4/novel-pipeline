@@ -1,7 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { Project, Chapter, Skill, ChatMessage } from '../../types';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
-import { Button, Space, Popover, Checkbox, Modal, Alert, Typography, Popconfirm } from 'antd';
+import { Button, Space, Modal, Alert, Typography, Popconfirm, Dropdown, Tooltip, message as antdMessage } from 'antd';
 import {
   BookOutlined,
   EditOutlined,
@@ -11,13 +11,14 @@ import {
   ExclamationCircleOutlined,
   ThunderboltOutlined,
   AuditOutlined,
-  UploadOutlined,
   AppstoreOutlined,
   EyeOutlined,
   CopyOutlined,
   DeleteOutlined,
+  MoreOutlined,
 } from '@ant-design/icons';
 import ChatPanel from '../ChatPanel';
+import SkillSelectorModal from '../SkillSelectorModal';
 import { db } from '../../db';
 
 const { Text } = Typography;
@@ -76,6 +77,7 @@ export default function DraftingRoom({
   logicReviewOutput,
   chapterChatMessages,
   chapterExtraSkillKeys,
+  chapterExtraSkillText,
   showChapterSkillPopover,
   showChapterOutlineEditor,
   viewingChapter,
@@ -101,75 +103,6 @@ export default function DraftingRoom({
   setShowChapterOutlineEditor,
   setViewingChapter,
 }: DraftingRoomProps) {
-  // ── Skill 选择 Popover 内容 ──
-  const skillPopoverContent = (
-    <div style={{ minWidth: 200 }}>
-      <Space direction="vertical" size={4} style={{ width: '100%' }}>
-        {skills
-          .filter((s) => !['workflow', 'blurb'].includes(s.key))
-          .map((s) => (
-            <Checkbox
-              key={s.key}
-              checked={chapterExtraSkillKeys.includes(s.key)}
-              onChange={(e) => {
-                setChapterExtraSkillKeys(
-                  e.target.checked
-                    ? [...chapterExtraSkillKeys, s.key]
-                    : chapterExtraSkillKeys.filter((k: string) => k !== s.key),
-                );
-              }}
-            >
-              <span style={{ fontSize: 11 }}>{s.name}</span>
-            </Checkbox>
-          ))}
-        <div
-          style={{
-            borderTop: '1px solid #eaeaea',
-            paddingTop: 6,
-            marginTop: 4,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              fontSize: 10,
-              color: '#888888',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            <UploadOutlined style={{ fontSize: 9 }} /> 上传临时 Skill
-            <input
-              type="file"
-              accept=".txt,.md"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) =>
-                  setChapterExtraSkillText((ev.target?.result as string) || '');
-                reader.readAsText(file, 'utf-8');
-                e.target.value = '';
-                setShowChapterSkillPopover(false);
-              }}
-            />
-          </label>
-          {chapterExtraSkillKeys.length > 0 && (
-            <span style={{ fontSize: 9, color: '#000000', fontWeight: 700 }}>
-              {chapterExtraSkillKeys.length} 已选
-            </span>
-          )}
-        </div>
-      </Space>
-    </div>
-  );
-
   return (
     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
       {/* ── Chapter selector sidebar ── */}
@@ -373,95 +306,94 @@ export default function DraftingRoom({
             placeholder="输入重写建议后按 Enter 发送，或点击上方按钮直接生成正文..."
             toolbar={
               <Space size={6} wrap>
-                <Button
-                  size="small"
-                  icon={<SaveOutlined />}
-                  onClick={handleSaveChapterManual}
-                >
-                  保存草稿
-                </Button>
-
-                <Button
-                  size="small"
-                  icon={<DownloadOutlined />}
-                  onClick={() => {
-                    const ch = chapters.find((c) => c.id === activeChapterId);
-                    if (ch) handleExportChapterMarkdown(ch);
-                  }}
-                >
-                  导出单章
-                </Button>
-
-                <Button
-                  type="primary"
-                  size="small"
-                  icon={
-                    <ThunderboltOutlined
-                      spin={activeTask === 'chapter' && isGenerating}
-                    />
-                  }
-                  disabled={isGenerating}
-                  onClick={() => handleChapterChatSend('')}
-                >
-                  {chapters.find((c) => c.id === activeChapterId)?.content
-                    ? '重新生成'
-                    : '生成正文'}
-                </Button>
+                <Tooltip title={isGenerating ? '正在生成中' : ''}>
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<ThunderboltOutlined spin={activeTask === 'chapter' && isGenerating} />}
+                    disabled={isGenerating}
+                    onClick={() => handleChapterChatSend('')}
+                  >
+                    {chapters.find((c) => c.id === activeChapterId)?.content ? '重新生成' : '生成正文'}
+                  </Button>
+                </Tooltip>
                 {renderTaskControl('chapter', () => handleGenerateChapterStream(true))}
 
-                <Button
-                  size="small"
-                  icon={
-                    <AuditOutlined
-                      spin={activeTask === 'review' && isGenerating}
-                    />
-                  }
-                  disabled={isGenerating}
-                  onClick={() => {
-                    const ch = chapters.find((c) => c.id === activeChapterId);
-                    if (ch) handleLogicReviewChapter(ch);
-                  }}
-                >
-                  逻辑审查
-                </Button>
+                <Tooltip title={isGenerating ? '正在生成中' : ''}>
+                  <Button
+                    size="small"
+                    icon={<AuditOutlined spin={activeTask === 'review' && isGenerating} />}
+                    disabled={isGenerating}
+                    onClick={() => {
+                      const ch = chapters.find((c) => c.id === activeChapterId);
+                      if (ch) handleLogicReviewChapter(ch);
+                    }}
+                  >
+                    逻辑审查
+                  </Button>
+                </Tooltip>
                 {renderTaskControl('review', () => {
                   const ch = chapters.find((c) => c.id === activeChapterId);
                   if (ch) handleLogicReviewChapter(ch, true);
                 })}
 
-                <Button
-                  size="small"
-                  icon={<ThunderboltOutlined />}
-                  disabled={isGenerating}
-                  onClick={() => {
-                    const slapContent =
-                      skills.find((s) => s.key === 'female_slap')?.content || '';
-                    handleChapterChatSend('按打脸闭环风格重新生成本章', slapContent);
-                  }}
-                >
-                  打脸闭环
-                </Button>
-
-                <Popover
-                  content={skillPopoverContent}
-                  title="选择 Skill"
-                  trigger="click"
-                  open={showChapterSkillPopover}
-                  onOpenChange={setShowChapterSkillPopover}
-                  placement="topLeft"
-                >
-                  <Button size="small" icon={<AppstoreOutlined />}>
-                    选择 Skill
+                <Tooltip title="保存当前草稿">
+                  <Button
+                    size="small"
+                    icon={<SaveOutlined />}
+                    onClick={handleSaveChapterManual}
+                  >
+                    保存
                   </Button>
-                </Popover>
+                </Tooltip>
 
-                <Button
-                  size="small"
-                  icon={<EditOutlined />}
-                  onClick={() => setShowChapterOutlineEditor(true)}
+                <Dropdown
+                  menu={{
+                    items: [
+                      {
+                        key: 'slap',
+                        icon: <ThunderboltOutlined />,
+                        label: '打脸闭环生成',
+                        disabled: isGenerating,
+                        onClick: () => {
+                          const slapContent = skills.find((s) => s.key === 'female_slap')?.content || '';
+                          handleChapterChatSend('按打脸闭环风格重新生成本章', slapContent);
+                        },
+                      },
+                      { type: 'divider' },
+                      {
+                        key: 'export',
+                        icon: <DownloadOutlined />,
+                        label: '导出本章 MD',
+                        onClick: () => {
+                          const ch = chapters.find((c) => c.id === activeChapterId);
+                          if (ch) {
+                            handleExportChapterMarkdown(ch);
+                            antdMessage.success('已导出');
+                          }
+                        },
+                      },
+                      {
+                        key: 'outline',
+                        icon: <EditOutlined />,
+                        label: '编辑章节大纲',
+                        onClick: () => setShowChapterOutlineEditor(true),
+                      },
+                      { type: 'divider' },
+                      {
+                        key: 'skill',
+                        icon: <AppstoreOutlined />,
+                        label: `选择 Skill${chapterExtraSkillKeys.length > 0 ? ` (${chapterExtraSkillKeys.length})` : ''}`,
+                        onClick: () => setShowChapterSkillPopover(true),
+                      },
+                    ],
+                  }}
+                  trigger={['click']}
                 >
-                  章节大纲
-                </Button>
+                  <Button size="small" icon={<MoreOutlined />}>
+                    更多
+                  </Button>
+                </Dropdown>
               </Space>
             }
           />
@@ -481,6 +413,20 @@ export default function DraftingRoom({
           </div>
         )}
       </div>
+
+      {/* ── Skill 选择弹窗 ── */}
+      <SkillSelectorModal
+        open={showChapterSkillPopover}
+        onClose={() => setShowChapterSkillPopover(false)}
+        skills={skills}
+        selectedKeys={chapterExtraSkillKeys}
+        onChange={setChapterExtraSkillKeys}
+        extraSkillText={chapterExtraSkillText}
+        onExtraSkillTextChange={setChapterExtraSkillText}
+        builtinKeys={['degrease', 'connect_skills', 'logic_check']}
+        excludeKeys={['workflow', 'blurb', 'outline_template']}
+        title="章节 Skill 选择"
+      />
 
       {/* ── Chapter outline editor modal ── */}
       <Modal

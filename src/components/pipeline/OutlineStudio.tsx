@@ -1,19 +1,21 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { Project, Skill, ChatMessage } from '../../types';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
-import { Button, Space, Popover, Checkbox } from 'antd';
+import { Button, Space, Dropdown, Tooltip, message as antdMessage } from 'antd';
 import {
   ThunderboltOutlined,
-  BookOutlined,
   EditOutlined,
   UploadOutlined,
   AuditOutlined,
   DownloadOutlined,
   AppstoreOutlined,
+  MoreOutlined,
+  SyncOutlined,
 } from '@ant-design/icons';
 import ChatPanel from '../ChatPanel';
 import OutlineEditorModal from '../OutlineEditorModal';
 import ExampleModal from '../ExampleModal';
+import SkillSelectorModal from '../SkillSelectorModal';
 import { splitOutlineSections } from '../../utils/pipeline';
 
 interface OutlineStudioProps {
@@ -58,6 +60,7 @@ export default function OutlineStudio({
   outlineReviewOutput,
   outlineGenerationStatus,
   outlineExtraSkillKeys,
+  outlineExtraSkillText,
   showOutlineEditor,
   showOutlineSkillPopover,
   showExampleModal,
@@ -78,75 +81,6 @@ export default function OutlineStudio({
   setOutlineExtraSkillKeys,
   setOutlineExtraSkillText,
 }: OutlineStudioProps) {
-  // ── Skill 选择 Popover 内容 ──
-  const skillPopoverContent = (
-    <div style={{ minWidth: 200 }}>
-      <Space direction="vertical" size={4} style={{ width: '100%' }}>
-        {skills
-          .filter((s) => !['workflow', 'blurb', 'outline_template'].includes(s.key))
-          .map((s) => (
-            <Checkbox
-              key={s.key}
-              checked={outlineExtraSkillKeys.includes(s.key)}
-              onChange={(e) => {
-                setOutlineExtraSkillKeys(
-                  e.target.checked
-                    ? [...outlineExtraSkillKeys, s.key]
-                    : outlineExtraSkillKeys.filter((k: string) => k !== s.key),
-                );
-              }}
-            >
-              <span style={{ fontSize: 11 }}>{s.name}</span>
-            </Checkbox>
-          ))}
-        <div
-          style={{
-            borderTop: '1px solid #eaeaea',
-            paddingTop: 6,
-            marginTop: 4,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-          }}
-        >
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 4,
-              fontSize: 10,
-              color: '#888888',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            <UploadOutlined style={{ fontSize: 9 }} /> 上传临时 Skill
-            <input
-              type="file"
-              accept=".txt,.md"
-              style={{ display: 'none' }}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                const reader = new FileReader();
-                reader.onload = (ev) =>
-                  setOutlineExtraSkillText((ev.target?.result as string) || '');
-                reader.readAsText(file, 'utf-8');
-                e.target.value = '';
-                setShowOutlineSkillPopover(false);
-              }}
-            />
-          </label>
-          {outlineExtraSkillKeys.length > 0 && (
-            <span style={{ fontSize: 9, color: '#000000', fontWeight: 700 }}>
-              {outlineExtraSkillKeys.length} 已选
-            </span>
-          )}
-        </div>
-      </Space>
-    </div>
-  );
-
   return (
     <div className="space-y-4">
       <OutlineEditorModal
@@ -183,111 +117,116 @@ export default function OutlineStudio({
         placeholder="输入修改意见后按 Enter 发送，或点击上方按钮直接生成大纲..."
         toolbar={
           <Space size={6} wrap>
-            <Button
-              type="primary"
-              size="small"
-              icon={
-                <ThunderboltOutlined
-                  spin={activeTask === 'outline' && isGenerating}
-                />
-              }
-              disabled={isGenerating}
-              onClick={() => handleOutlineChatSend('')}
-            >
-              {project.outline ? '重新生成' : '生成大纲'}
-            </Button>
+            <Tooltip title={isGenerating ? '正在生成中' : ''}>
+              <Button
+                type="primary"
+                size="small"
+                icon={<ThunderboltOutlined spin={activeTask === 'outline' && isGenerating} />}
+                disabled={isGenerating}
+                onClick={() => handleOutlineChatSend('')}
+              >
+                {project.outline ? '重新生成' : '生成大纲'}
+              </Button>
+            </Tooltip>
             {renderTaskControl('outline', () => handleGenerateOutline(true))}
 
-            <Button
-              size="small"
-              icon={<ThunderboltOutlined />}
-              disabled={isGenerating}
-              onClick={() => {
-                const slapContent =
-                  skills.find((s) => s.key === 'female_slap')?.content || '';
-                handleGenerateOutline(false, slapContent);
-              }}
-            >
-              打脸闭环
-            </Button>
-
-            <Button
-              size="small"
-              icon={
-                <AuditOutlined
-                  spin={activeTask === 'outline-review' && isGenerating}
-                />
-              }
-              disabled={isGenerating || !project.outline}
-              onClick={() => handleReviewOutline()}
-            >
-              审查大纲
-            </Button>
+            <Tooltip title={!project.outline ? '请先生成大纲' : ''}>
+              <Button
+                size="small"
+                icon={<AuditOutlined spin={activeTask === 'outline-review' && isGenerating} />}
+                disabled={isGenerating || !project.outline}
+                onClick={() => handleReviewOutline()}
+              >
+                审查大纲
+              </Button>
+            </Tooltip>
             {renderTaskControl('outline-review', () => handleReviewOutline(true))}
 
-            <Button
-              size="small"
-              icon={<DownloadOutlined />}
-              disabled={!project.outline}
-              onClick={() => {
-                const blob = new Blob([project.outline], { type: 'text/markdown' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `《${project.title || '未命名'}》大纲.md`;
-                a.click();
-                URL.revokeObjectURL(url);
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'slap',
+                    icon: <ThunderboltOutlined />,
+                    label: '打脸闭环生成',
+                    disabled: isGenerating,
+                    onClick: () => {
+                      const slapContent = skills.find((s) => s.key === 'female_slap')?.content || '';
+                      handleGenerateOutline(false, slapContent);
+                    },
+                  },
+                  { type: 'divider' },
+                  {
+                    key: 'sync',
+                    icon: <SyncOutlined />,
+                    label: '同步章节',
+                    disabled: isGenerating || !project.outline,
+                    onClick: async () => {
+                      const n = await syncOutlineChaptersToDb(project.outline, projectId);
+                      n > 0
+                        ? antdMessage.success(`已同步 ${n} 个章节`)
+                        : antdMessage.warning('未找到章节（需包含"### 第 X 章"格式）');
+                    },
+                  },
+                  {
+                    key: 'export',
+                    icon: <DownloadOutlined />,
+                    label: '导出 MD',
+                    disabled: !project.outline,
+                    onClick: () => {
+                      const blob = new Blob([project.outline], { type: 'text/markdown' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `《${project.title || '未命名'}》大纲.md`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                      antdMessage.success('已导出');
+                    },
+                  },
+                  {
+                    key: 'edit',
+                    icon: <EditOutlined />,
+                    label: '编辑大纲',
+                    disabled: !project.outline,
+                    onClick: () => setShowOutlineEditor(true),
+                  },
+                  { type: 'divider' },
+                  {
+                    key: 'skill',
+                    icon: <AppstoreOutlined />,
+                    label: `选择 Skill${outlineExtraSkillKeys.length > 0 ? ` (${outlineExtraSkillKeys.length})` : ''}`,
+                    onClick: () => setShowOutlineSkillPopover(true),
+                  },
+                  {
+                    key: 'example',
+                    icon: <UploadOutlined />,
+                    label: `上传例文${project.rawExample ? ' ✓ 已上传' : ''}`,
+                    onClick: () => setShowExampleModal(true),
+                  },
+                ],
               }}
+              trigger={['click']}
             >
-              导出 MD
-            </Button>
-
-            <Button
-              size="small"
-              icon={<BookOutlined />}
-              disabled={isGenerating || !project.outline}
-              onClick={async () => {
-                const n = await syncOutlineChaptersToDb(project.outline, projectId);
-                alert(
-                  n > 0
-                    ? `已同步 ${n} 个章节到数据库。`
-                    : '未在大纲中找到章节（请确认包含"### 第 X 章："格式）。',
-                );
-              }}
-            >
-              同步章节
-            </Button>
-
-            <Popover
-              content={skillPopoverContent}
-              title="选择 Skill"
-              trigger="click"
-              open={showOutlineSkillPopover}
-              onOpenChange={setShowOutlineSkillPopover}
-              placement="topLeft"
-            >
-              <Button size="small" icon={<AppstoreOutlined />}>
-                选择 Skill
+              <Button size="small" icon={<MoreOutlined />}>
+                更多
               </Button>
-            </Popover>
-
-            <Button
-              size="small"
-              icon={<UploadOutlined />}
-              onClick={() => setShowExampleModal(true)}
-            >
-              上传例文{project.rawExample ? ' ✓' : ''}
-            </Button>
-
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => setShowOutlineEditor(true)}
-            >
-              编辑大纲
-            </Button>
+            </Dropdown>
           </Space>
         }
+      />
+
+      <SkillSelectorModal
+        open={showOutlineSkillPopover}
+        onClose={() => setShowOutlineSkillPopover(false)}
+        skills={skills}
+        selectedKeys={outlineExtraSkillKeys}
+        onChange={setOutlineExtraSkillKeys}
+        extraSkillText={outlineExtraSkillText}
+        onExtraSkillTextChange={setOutlineExtraSkillText}
+        builtinKeys={['outline_template', ...(project.genre === 'classic-wolf' ? ['wolf_setting'] : []), ...(project.genre === 'female-slap' ? ['female_slap'] : [])]}
+        excludeKeys={['workflow', 'blurb']}
+        title="大纲 Skill 选择"
       />
 
       <ExampleModal

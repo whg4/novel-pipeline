@@ -5,6 +5,7 @@ import {
   runLLMStream, compileOutlinePrompt, compileOutlineLogicReviewPrompt,
   compileOutlineRevisionPrompt,
 } from '../services/llm';
+import { syncOutlineChaptersToDb } from '../utils/pipeline';
 import type { GenerationTask } from './usePipelineTask';
 import type { LLMStreamOptions } from '../services/llm';
 
@@ -77,7 +78,15 @@ export function useOutlineGeneration(
       }, streamOptions);
 
       await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
-      setOutlineGenerationStatus('大纲已生成并保存。');
+      // 自动同步章节结构
+      if (accumulated) {
+        const n = await syncOutlineChaptersToDb(accumulated, projectId);
+        setOutlineGenerationStatus(n > 0
+          ? `大纲已生成并保存，已同步 ${n} 个章节。`
+          : '大纲已生成并保存。');
+      } else {
+        setOutlineGenerationStatus('大纲已生成并保存。');
+      }
       if (!wasPaused) {
         await db.chatMessages.add({ projectId, scope: 'outline', role: 'assistant', kind: 'outline', content: accumulated, createdAt: Date.now() });
       }
@@ -206,7 +215,15 @@ export function useOutlineGeneration(
       }, streamOptions);
 
       await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
-      setOutlineGenerationStatus('大纲已根据审查建议修订并保存。');
+      // 自动同步章节结构
+      if (accumulated) {
+        const n = await syncOutlineChaptersToDb(accumulated, projectId);
+        setOutlineGenerationStatus(n > 0
+          ? `大纲已修订并保存，已同步 ${n} 个章节。`
+          : '大纲已修订并保存。');
+      } else {
+        setOutlineGenerationStatus('大纲已修订并保存。');
+      }
       if (!wasPaused) {
         await db.chatMessages.add({
           projectId, scope: 'outline', role: 'assistant', kind: 'outline',
