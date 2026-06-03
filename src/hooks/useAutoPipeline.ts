@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { message as antdMessage } from 'antd';
 import { db } from '../db';
 import type { Project, Skill } from '../types';
 import {
@@ -425,7 +426,7 @@ export function useAutoPipeline(
         uiSetters.setPauseMessage('已暂停，点击继续将从当前步骤接着执行。');
         setAutoProgress(prev => prev ? { ...prev, step: '已暂停（点击继续）' } : null);
       } else {
-        alert(`自动流水线执行出错：${e.message}`);
+        antdMessage.error(`自动流水线执行出错：${e.message}`);
         autoResumeRef.current = null;
         clearAutoResumeState(projectId);
         setAutoProgress(null);

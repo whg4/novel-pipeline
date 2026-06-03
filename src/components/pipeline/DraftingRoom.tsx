@@ -218,7 +218,7 @@ export default function DraftingRoom({
                         color: '#00a63e',
                       }}
                     >
-                      {ch.content.length} words
+                      {ch.content.length.toLocaleString()} 字
                     </span>
                   ) : (
                     <span

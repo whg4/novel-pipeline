@@ -10,7 +10,7 @@ import {
 } from '../types';
 import { createConfigForProvider, getProviderPreset, normalizeLegacyProvider, normalizeModelForProvider } from './providers';
 import { retryWithBackoff } from '../utils/retryWithBackoff';
-import { estimateTokens, trimPromptToFit } from '../utils/tokenEstimator';
+import { estimateTokens, trimPromptToFit, getModelContextWindow } from '../utils/tokenEstimator';
 
 const STORAGE_KEY = 'novel_pipeline_api_config'; // 旧版单一全局配置（用于迁移）
 const PROVIDER_CONFIGS_KEY = 'novel_pipeline_provider_configs'; // 每供应商独立配置
@@ -234,6 +234,8 @@ function extractRelayText(payload: unknown): string {
   return data?.text ?? data?.token ?? data?.delta ?? data?.content ?? extractOpenAIText(payload) ?? '';
 }
 
+const STREAM_INACTIVITY_TIMEOUT_MS = 60_000; // 60 秒无数据视为卡死
+
 async function consumeEventStream(
   response: Response,
   onToken: StreamTokenHandler,
@@ -247,9 +249,22 @@ async function consumeEventStream(
   let fullText = '';
   let buffer = '';
 
+  // 带超时的 read：60 秒内无数据则判定为卡死
+  const readWithTimeout = (): Promise<ReadableStreamReadResult<Uint8Array>> => {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error('模型返回流超过 60 秒无响应，已自动中断。请重试或切换模型。'));
+      }, STREAM_INACTIVITY_TIMEOUT_MS);
+      reader.read().then(
+        result => { clearTimeout(timer); resolve(result); },
+        err => { clearTimeout(timer); reject(err); },
+      );
+    });
+  };
+
   while (true) {
     assertStreamActive(options);
-    const { done, value } = await reader.read();
+    const { done, value } = await readWithTimeout();
     assertStreamActive(options);
     if (done) break;
 
@@ -855,12 +870,17 @@ export function compileChapterPrompt({
   regenerationPrompt?: string;
   extraSkillKeys?: string[];
   extraSkillText?: string;
-  /** 最大上下文 token 数，默认 20000（约覆盖 32K 模型的 65% - 输出空间） */
+  /** 最大上下文 token 数，默认根据当前阶段模型的 context window 自动计算 */
   maxContextTokens?: number;
   /** 故事记忆（跨章节连续性信息） */
   storyMemory?: import('../types').StoryMemory;
 }): { system: string; user: string } {
-  const tokenBudget = maxContextTokens ?? 20000;
+  // 动态计算 token 预算：取模型 context window 的 60%，预留 40% 给输出 + 系统开销
+  const tokenBudget = maxContextTokens ?? (() => {
+    const config = getConfigForStage('chapter');
+    const ctxWindow = getModelContextWindow(config.model);
+    return Math.floor(ctxWindow * 0.6);
+  })();
   const degreaseSkill = skills.find(s => s.key === 'degrease')?.content || '';
   const connectSkill = skills.find(s => s.key === 'connect_skills')?.content || '';
   const logicCheckSkill = skills.find(s => s.key === 'logic_check')?.content || '';

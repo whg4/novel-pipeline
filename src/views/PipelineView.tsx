@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { message as antdMessage } from 'antd';
 import { db } from '../db';
 import type { ChatMessage } from '../types';
 import { stripLogicReview, sanitizeMarkdownFileName, syncOutlineChaptersToDb } from '../utils/pipeline';
@@ -105,7 +106,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       .filter((chapter) => stripLogicReview(chapter.content || '').length > 0);
 
     if (exportChapters.length === 0) {
-      alert('还没有可导出的章节正文。');
+      antdMessage.warning('还没有可导出的章节正文。');
       return;
     }
 

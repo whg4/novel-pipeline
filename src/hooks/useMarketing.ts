@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { message as antdMessage } from 'antd';
 import { db } from '../db';
 import type { Project, Chapter, Skill } from '../types';
 import {
@@ -167,7 +168,7 @@ export function useMarketing(
         markTaskPaused('title');
         if (acc) await db.projects.update(projectId, { titleCandidates: acc });
       } else {
-        alert(`书名生成失败：${e.message}`);
+        antdMessage.error(`书名生成失败：${e.message}`);
       }
     } finally {
       setIsGenerating(false);
@@ -177,12 +178,12 @@ export function useMarketing(
 
   const handleGenerateCoverImage = async () => {
     const prompt = coverImagePrompt.trim();
-    if (!prompt) { alert('请先输入封面提示词'); return; }
+    if (!prompt) { antdMessage.warning('请先输入封面提示词'); return; }
 
     const openaiCfg = getProviderConfig('openai');
     const apiKey = openaiCfg.apiKey;
     if (!apiKey) {
-      alert('请先在"模型连接"设置中填写 OpenAI API Key');
+      antdMessage.warning('请先在"模型连接"设置中填写 OpenAI API Key');
       return;
     }
 

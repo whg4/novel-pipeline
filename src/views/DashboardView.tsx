@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { message as antdMessage } from 'antd';
 import { db } from '../db';
 import { Project } from '../types';
-import { Plus, BookOpen, Clock, Tag, History, Trash2, Award, FileUp } from 'lucide-react';
+import { Plus, BookOpen, Clock, Tag, History, Trash2, Award, FileUp, Download, Upload } from 'lucide-react';
+import { exportProject, importProject } from '../utils/projectIO';
 
 interface DashboardViewProps {
   onSelectProject: (projectId: number) => void;
@@ -18,6 +20,7 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
   const [background, setBackground] = useState('');
   const [characters, setCharacters] = useState('');
   const [rawExample, setRawExample] = useState('');
+  const importInputRef = useRef<HTMLInputElement>(null);
 
   const getChapterCount = (projectId: number) => {
     return chapters.filter(c => c.projectId === projectId).length;
@@ -36,6 +39,31 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
         if (ch.id) await db.chapters.delete(ch.id);
       }
     }
+  };
+
+  const handleExportProject = async (projectId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await exportProject(projectId);
+      antdMessage.success('项目已导出');
+    } catch (err: any) {
+      antdMessage.error(`导出失败：${err.message}`);
+    }
+  };
+
+  const handleImportProject = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const newId = await importProject(file);
+      if (newId) {
+        antdMessage.success('项目已导入');
+        onSelectProject(newId);
+      }
+    } catch (err: any) {
+      antdMessage.error(`导入失败：${err.message}`);
+    }
+    e.target.value = '';
   };
 
   const handleCreateProject = async (e: React.FormEvent) => {
@@ -76,13 +104,28 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
               基于你的工作流和 Skill，完成仿写大纲、正文去油、逻辑自查、简介与封面提示词的一体化创作。
             </p>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-black hover:bg-[#333] text-white font-bold px-5 py-2.5 text-sm transition shrink-0"
-          >
-            <Plus size={15} />
-            新建小说项目
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => importInputRef.current?.click()}
+              className="flex items-center gap-2 border border-[#eaeaea] hover:bg-[#f5f5f5] text-[#696b72] font-semibold px-4 py-2 text-sm transition"
+            >
+              <Upload size={14} /> 导入项目
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={handleImportProject}
+            />
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 bg-black hover:bg-[#333] text-white font-bold px-5 py-2.5 text-sm transition shrink-0"
+            >
+              <Plus size={15} />
+              新建小说项目
+            </button>
+          </div>
         </div>
       </div>
 
@@ -131,13 +174,22 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
                           {project.title}
                         </h3>
                       </div>
-                      <button
-                        onClick={(e) => handleDeleteProject(project.id!, e)}
-                        className="text-[#d4d4d4] hover:text-black transition shrink-0 p-0.5"
-                        title="删除项目"
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => handleExportProject(project.id!, e)}
+                          className="text-[#d4d4d4] hover:text-black transition shrink-0 p-0.5"
+                          title="导出项目"
+                        >
+                          <Download size={14} />
+                        </button>
+                        <button
+                          onClick={(e) => handleDeleteProject(project.id!, e)}
+                          className="text-[#d4d4d4] hover:text-red-500 transition shrink-0 p-0.5"
+                          title="删除项目"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">

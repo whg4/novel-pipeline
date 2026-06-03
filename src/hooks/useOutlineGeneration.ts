@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { message as antdMessage } from 'antd';
 import { db } from '../db';
 import type { Project, Skill, ChatMessage } from '../types';
 import {
@@ -99,7 +100,7 @@ export function useOutlineGeneration(
           await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
         }
       } else {
-        alert(`大纲生成失败：${e.message}`);
+        antdMessage.error(`大纲生成失败：${e.message}`);
         setOutlineGenerationStatus('大纲生成失败。');
       }
     } finally {
@@ -110,7 +111,7 @@ export function useOutlineGeneration(
 
   const handleReviewOutline = async (resume = false) => {
     if (!project?.outline) {
-      alert('请先生成大纲后再进行逻辑审查。');
+      antdMessage.warning('请先生成大纲后再进行逻辑审查。');
       return;
     }
     const logicSkill = skills.find(s => s.key === 'logic_check')?.content || '';
@@ -137,7 +138,7 @@ export function useOutlineGeneration(
         wasPaused = true;
         markTaskPaused('outline-review');
       } else {
-        alert(`大纲审查失败：${e.message}`);
+        antdMessage.error(`大纲审查失败：${e.message}`);
       }
     } finally {
       setIsGenerating(false);
@@ -239,7 +240,7 @@ export function useOutlineGeneration(
           await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
         }
       } else {
-        alert(`大纲修订失败：${e.message}`);
+        antdMessage.error(`大纲修订失败：${e.message}`);
         setOutlineGenerationStatus('大纲修订失败。');
       }
     } finally {

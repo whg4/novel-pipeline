@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { message as antdMessage } from 'antd';
 import { db } from '../db';
 import type { Project, Chapter, Skill, ChatMessage } from '../types';
 import {
@@ -83,6 +84,37 @@ export function useChapterDrafting(
     setGreaseWarnings(foundWarnings);
   }, [editingDraft]);
 
+  // ── 自动保存（编辑后 2 秒 debounce）──
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedDraftRef = useRef<string>('');
+
+  useEffect(() => {
+    // 生成中不自动保存（由生成流程自行保存）
+    if (!activeChapterId || !editingDraft) return;
+    // 内容未变化则跳过
+    if (editingDraft === lastSavedDraftRef.current) return;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      const ch = chapters.find(c => c.id === activeChapterId);
+      if (!ch || ch.content === editingDraft) return;
+      const updatedHistory = [...(ch.versionHistory || [])];
+      if (ch.content) {
+        updatedHistory.push({ content: ch.content, timestamp: Date.now() });
+      }
+      await db.chapters.update(activeChapterId, {
+        content: editingDraft,
+        versionHistory: updatedHistory.slice(-5),
+        lastEdited: Date.now(),
+      });
+      lastSavedDraftRef.current = editingDraft;
+    }, 2000);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [editingDraft, activeChapterId]);
+
   const handleSelectChapter = (ch: Chapter) => {
     setActiveChapterId(ch.id!);
     setEditingTitle(ch.title);
@@ -150,7 +182,7 @@ export function useChapterDrafting(
       versionHistory: updatedHistory.slice(-5),
       lastEdited: Date.now()
     });
-    alert('草稿已保存。');
+    antdMessage.success('草稿已保存。');
   };
 
   const handleGenerateChapterStream = async (resume = false, promptOverride?: string, extraSkillTextOverride?: string) => {
@@ -232,7 +264,7 @@ export function useChapterDrafting(
   const handleExportChapterMarkdown = (ch: Chapter) => {
     const content = ch.id === activeChapterId ? editingDraft : (ch.content || '');
     const clean = stripLogicReview(content);
-    if (!clean) { alert('该章节还没有正文。'); return; }
+    if (!clean) { antdMessage.warning('该章节还没有正文。'); return; }
     const title = ch.title || `第 ${ch.chapterNumber} 章`;
     const markdown = `# ${title}\n\n${clean}\n`;
     const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
@@ -246,7 +278,7 @@ export function useChapterDrafting(
 
   const handleLogicReviewChapter = async (ch: Chapter, resume = false) => {
     if (!ch.content || ch.content.length < 50) {
-      alert('该章节还没有正文，无法进行逻辑审查。');
+      antdMessage.warning('该章节还没有正文，无法进行逻辑审查。');
       return;
     }
     const streamOptions = beginGenerationTask('review', resume);
@@ -278,7 +310,7 @@ export function useChapterDrafting(
         markTaskPaused('review');
         if (acc) await db.chapters.update(ch.id!, { logicCheckLog: acc });
       } else {
-        alert(`逻辑审查失败：${e.message}`);
+        antdMessage.error(`逻辑审查失败：${e.message}`);
       }
     } finally {
       setIsGenerating(false);
