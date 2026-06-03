@@ -20,6 +20,7 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
   const [background, setBackground] = useState('');
   const [characters, setCharacters] = useState('');
   const [rawExample, setRawExample] = useState('');
+  const [showGuide, setShowGuide] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
 
   const getChapterCount = (projectId: number) => {
@@ -105,6 +106,13 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
             </p>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setShowGuide(true)}
+              className="flex items-center gap-1 border border-[#eaeaea] hover:bg-[#f5f5f5] text-[#696b72] font-semibold px-3 py-2 text-sm transition"
+              title="快速入门"
+            >
+              ?
+            </button>
             <button
               onClick={() => importInputRef.current?.click()}
               className="flex items-center gap-2 border border-[#eaeaea] hover:bg-[#f5f5f5] text-[#696b72] font-semibold px-4 py-2 text-sm transition"
@@ -334,6 +342,56 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Start Guide */}
+      {showGuide && (
+        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white border border-[#eaeaea] max-w-lg w-full p-6 shadow-xl space-y-4">
+            <div className="border-b border-[#171717] pb-3">
+              <h3 className="text-xl font-black text-[#171717]">快速入门</h3>
+            </div>
+            <div className="space-y-3 text-sm text-[#333] leading-relaxed">
+              <div className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 bg-black text-white text-xs font-bold flex items-center justify-center">1</span>
+                <div>
+                  <div className="font-bold">设置 API Key</div>
+                  <div className="text-[#888] text-xs">进入「模型连接」配置至少一个 LLM 供应商的 API Key（推荐 DeepSeek 或 Gemini）</div>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 bg-black text-white text-xs font-bold flex items-center justify-center">2</span>
+                <div>
+                  <div className="font-bold">新建项目</div>
+                  <div className="text-[#888] text-xs">填写书名、选择题材、粘贴要仿写的例文（最重要！），设定背景和人物</div>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 bg-black text-white text-xs font-bold flex items-center justify-center">3</span>
+                <div>
+                  <div className="font-bold">一键全自动</div>
+                  <div className="text-[#888] text-xs">进入创作流水线后点击「一键全自动」，系统自动完成：大纲生成 → 章节写作 → 逻辑审查 → 推广素材</div>
+                </div>
+              </div>
+              <div className="flex gap-3">
+                <span className="flex-shrink-0 w-6 h-6 bg-black text-white text-xs font-bold flex items-center justify-center">4</span>
+                <div>
+                  <div className="font-bold">精修优化</div>
+                  <div className="text-[#888] text-xs">在聊天框中输入修改意见，逐章精修。或使用「逻辑审查」自动检测问题</div>
+                </div>
+              </div>
+            </div>
+            <div className="border-t border-[#eaeaea] pt-3 flex justify-between items-center">
+              <span className="text-[10px] text-[#bbb]">数据保存在浏览器本地，建议定期导出备份</span>
+              <button
+                onClick={() => setShowGuide(false)}
+                className="bg-black hover:bg-[#333] text-white font-bold px-4 py-1.5 text-sm transition"
+              >
+                知道了
+              </button>
+            </div>
           </div>
         </div>
       )}

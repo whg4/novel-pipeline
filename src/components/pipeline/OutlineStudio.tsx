@@ -1,7 +1,8 @@
+import { useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Project, Skill, ChatMessage } from '../../types';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
-import { Button, Space, Dropdown, Tooltip, message as antdMessage } from 'antd';
+import { Button, Space, Dropdown, Tooltip, Modal, message as antdMessage } from 'antd';
 import {
   ThunderboltOutlined,
   EditOutlined,
@@ -11,11 +12,13 @@ import {
   AppstoreOutlined,
   MoreOutlined,
   SyncOutlined,
+  BookOutlined,
 } from '@ant-design/icons';
 import ChatPanel from '../ChatPanel';
 import OutlineEditorModal from '../OutlineEditorModal';
 import ExampleModal from '../ExampleModal';
 import SkillSelectorModal from '../SkillSelectorModal';
+import CollapsibleOutline from '../CollapsibleOutline';
 import { splitOutlineSections } from '../../utils/pipeline';
 
 interface OutlineStudioProps {
@@ -81,6 +84,8 @@ export default function OutlineStudio({
   setOutlineExtraSkillKeys,
   setOutlineExtraSkillTexts,
 }: OutlineStudioProps) {
+  const [showOutlineViewer, setShowOutlineViewer] = useState(false);
+
   return (
     <div className="space-y-4">
       <OutlineEditorModal
@@ -117,6 +122,13 @@ export default function OutlineStudio({
         placeholder="输入修改意见后按 Enter 发送，或点击上方按钮直接生成大纲..."
         emptyTitle="大纲工作台"
         emptyDescription="点击「生成大纲」开始，或在下方输入修改意见"
+        suggestions={[
+          '让开头更有冲突感',
+          '增加反转和悬念',
+          '优化角色动机逻辑',
+          '缩短到 20 章',
+          '增加更多爽点',
+        ]}
         toolbar={
           <Space size={6} wrap>
             <Tooltip title={isGenerating ? '正在生成中' : ''}>
@@ -187,6 +199,13 @@ export default function OutlineStudio({
                     },
                   },
                   {
+                    key: 'view',
+                    icon: <BookOutlined />,
+                    label: '查看大纲结构',
+                    disabled: !project.outline,
+                    onClick: () => setShowOutlineViewer(true),
+                  },
+                  {
                     key: 'edit',
                     icon: <EditOutlined />,
                     label: '编辑大纲',
@@ -230,6 +249,17 @@ export default function OutlineStudio({
         excludeKeys={['workflow', 'blurb']}
         title="大纲 Skill 选择"
       />
+
+      {/* 大纲结构查看器 */}
+      <Modal
+        title="大纲结构"
+        open={showOutlineViewer}
+        onCancel={() => setShowOutlineViewer(false)}
+        footer={null}
+        width={600}
+      >
+        <CollapsibleOutline outline={project.outline || ''} />
+      </Modal>
 
       <ExampleModal
         isOpen={showExampleModal}

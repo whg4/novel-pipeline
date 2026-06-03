@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Project, Chapter, Skill, ChatMessage } from '../../types';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
@@ -118,6 +119,38 @@ export default function DraftingRoom({
       await db.chapters.update(target.id, { chapterNumber: ch.chapterNumber, lastEdited: Date.now() });
     }
   };
+
+  // ── 键盘快捷键 ──
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const isMeta = e.metaKey || e.ctrlKey;
+      // Cmd/Ctrl+S → 保存草稿
+      if (isMeta && e.key === 's') {
+        e.preventDefault();
+        handleSaveChapterManual();
+        return;
+      }
+      // Cmd/Ctrl+Enter → 生成正文
+      if (isMeta && e.key === 'Enter') {
+        e.preventDefault();
+        if (!isGenerating && activeChapterId) {
+          handleChapterChatSend('');
+        }
+        return;
+      }
+      // Alt+Up/Down → 切换章节
+      if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        e.preventDefault();
+        const idx = chapters.findIndex(c => c.id === activeChapterId);
+        const targetIdx = e.key === 'ArrowUp' ? idx - 1 : idx + 1;
+        if (targetIdx >= 0 && targetIdx < chapters.length) {
+          handleSelectChapter(chapters[targetIdx]);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeChapterId, chapters, isGenerating]);
 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
@@ -339,6 +372,13 @@ export default function DraftingRoom({
             errorMessage={chapterError}
             emptyTitle="章节写作间"
             emptyDescription="从左侧选择章节，或点击「生成正文」开始写作"
+            suggestions={[
+              '让开头更有张力',
+              '增加对话互动',
+              '减少 AI 味描写',
+              '加强章末悬念',
+              '补充场景细节',
+            ]}
             toolbar={
               <Space size={6} wrap>
                 <Tooltip title={isGenerating ? '正在生成中' : ''}>

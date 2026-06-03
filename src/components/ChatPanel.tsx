@@ -38,6 +38,8 @@ interface ChatPanelProps {
   /** 空状态引导文案 */
   emptyTitle?: string;
   emptyDescription?: string;
+  /** 输入框上方的快捷建议 */
+  suggestions?: string[];
 }
 
 // ── 工具函数 ──
@@ -198,6 +200,7 @@ export default function ChatPanel({
   className = '',
   emptyTitle,
   emptyDescription,
+  suggestions,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -572,6 +575,30 @@ export default function ChatPanel({
             </Space>
           </div>
         )}
+        {/* ── 快捷建议 ── */}
+        {suggestions && suggestions.length > 0 && !input && !isStreaming && messages.length > 0 && (
+          <div style={{
+            display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8,
+          }}>
+            {suggestions.map((s, i) => (
+              <button
+                key={i}
+                onClick={() => onSend(s)}
+                style={{
+                  padding: '3px 10px', borderRadius: 14,
+                  border: '1px solid #eaeaea', background: '#fafafa',
+                  fontSize: 11, color: '#666', cursor: 'pointer',
+                  transition: 'all 0.15s', whiteSpace: 'nowrap',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = '#999'; e.currentTarget.style.color = '#333'; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = '#eaeaea'; e.currentTarget.style.color = '#666'; }}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+
         <Sender
           value={input}
           onChange={setInput}

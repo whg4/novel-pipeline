@@ -56,30 +56,82 @@ export function useChapterDrafting(
     }
   }, [chapters]);
 
-  // Client-Side AI Grease Detection
+  // Client-Side AI Grease Detection（评分制）
   useEffect(() => {
     if (!editingDraft) {
       setGreaseWarnings([]);
       return;
     }
     const foundWarnings: string[] = [];
-    const badPatterns = [
-      { regex: /眼神.*(暗|深|沉)/i, label: '"眼神一暗/变深" (经典 AI 微表情套路)' },
-      { regex: /喉结.*(滚动|微动)/i, label: '"喉结滚动" (AI 微表情套路)' },
-      { regex: /指尖.*(颤|抖)/i, label: '"指尖发颤" (高频 AI 情绪描写)' },
-      { regex: /深吸.*口气/i, label: '"深吸一口气" (AI 呼吸过渡)' },
-      { regex: /没有.*由于|没有.*迟疑/i, label: '"没有一丝犹豫" (AI 决策描述重复)' },
-      { regex: /(不单|不仅).*(甚至连)/i, label: '"不仅...甚至连..." (AI 修辞结构)' },
-      { regex: /没有.*拉扯/i, label: '"没有拉扯" (AI 套路总结)' },
-      { regex: /(自我认知|极端荒谬|在.*智谋面前|他不知道的是)/i, label: '"上帝视角分析" (违反限知叙述约束)' },
-      { regex: /(像是在看.*滑稽|像是在看.*脑萎缩)/i, label: '"强行刻薄比喻" (违反去油底线)' }
+    const badPatterns: { regex: RegExp; label: string; score: number }[] = [
+      // ── 微表情套路 ──
+      { regex: /眼神.*(暗|深|沉|冷|厉|锐)/g, label: '眼神一暗/变深 (AI 微表情)', score: 1 },
+      { regex: /喉结.*(滚动|微动|滑动)/g, label: '喉结滚动 (AI 微表情)', score: 1 },
+      { regex: /指尖.*(颤|抖|发白|收紧)/g, label: '指尖发颤 (AI 情绪描写)', score: 1 },
+      { regex: /嘴角.*(微微|轻轻|缓缓).*(上扬|勾起|扬起)/g, label: '嘴角微微上扬 (AI 微笑套路)', score: 1 },
+      { regex: /眸子.*(暗|深|沉|闪|亮)/g, label: '眸子一暗 (AI 眼神套路)', score: 1 },
+      { regex: /眉.*(微蹙|轻蹙|紧锁|拧起)/g, label: '眉头微蹙 (AI 表情套路)', score: 1 },
+
+      // ── 呼吸/身体过渡 ──
+      { regex: /深吸.*口气/g, label: '深吸一口气 (AI 呼吸过渡)', score: 1 },
+      { regex: /不禁.*(屏住|倒吸|攥紧)/g, label: '不禁屏住呼吸 (AI 过渡)', score: 1 },
+      { regex: /拳头.*(攥紧|握紧|收紧)/g, label: '拳头攥紧 (AI 身体反应)', score: 1 },
+
+      // ── 修辞结构 ──
+      { regex: /没有.*由于|没有.*迟疑|没有.*犹豫/g, label: '没有一丝犹豫 (AI 决策描述)', score: 1 },
+      { regex: /(不单|不仅).*(甚至还|甚至于)/g, label: '不仅...甚至 (AI 修辞)', score: 1 },
+      { regex: /没有.*拉扯/g, label: '没有拉扯 (AI 套路总结)', score: 1 },
+      { regex: /仿佛.*般|宛如.*般|好似.*般/g, label: '仿佛...般 (AI 比喻结构)', score: 1 },
+
+      // ── 叙事违规 ──
+      { regex: /(自我认知|极端荒谬|在.*智谋面前|他不知道的是)/g, label: '上帝视角分析 (违反限知叙述)', score: 2 },
+      { regex: /(像是在看.*滑稽|像是在看.*脑萎缩|像看.*傻子)/g, label: '强行刻薄比喻 (违反去油底线)', score: 2 },
+
+      // ── 高频 AI 副词/形容词堆砌 ──
+      { regex: /微微/g, label: '「微微」过度使用', score: 1 },
+      { regex: /缓缓/g, label: '「缓缓」过度使用', score: 1 },
+      { regex: /淡淡/g, label: '「淡淡」过度使用', score: 1 },
+      { regex: /悄然/g, label: '「悄然」过度使用', score: 1 },
+      { regex: /竟然|居然/g, label: '「竟然/居然」过度使用', score: 1 },
+      { regex: /不禁/g, label: '「不禁」过度使用', score: 1 },
+
+      // ── 结构性问题 ──
+      { regex: /——.*——/g, label: '连续破折号插入 (AI 注解习惯)', score: 1 },
+      { regex: /（[^）]{0,5}注[^）]{0,10}）/g, label: '括号注解 (AI 旁白习惯)', score: 2 },
     ];
 
+    let totalScore = 0;
     badPatterns.forEach(p => {
-      if (p.regex.test(editingDraft)) {
-        foundWarnings.push(p.label);
+      const matches = editingDraft.match(p.regex);
+      if (matches && matches.length > 0) {
+        const count = matches.length;
+        const penalty = Math.min(count, 3); // 单个模式最多扣 3 分
+        totalScore += penalty * p.score;
+        foundWarnings.push(`${p.label} ×${count}`);
       }
     });
+
+    // 额外：短句重复检测（连续 3 句都是 5 字以下的短句）
+    const sentences = editingDraft.split(/[。！？\n]+/).filter(s => s.trim().length > 0);
+    let shortStreak = 0;
+    for (const s of sentences) {
+      if (s.trim().length <= 5) {
+        shortStreak++;
+        if (shortStreak >= 3) {
+          foundWarnings.push('连续短句重复 (AI 节奏单一)');
+          totalScore += 2;
+          break;
+        }
+      } else {
+        shortStreak = 0;
+      }
+    }
+
+    // 将评分附加到第一条警告
+    if (foundWarnings.length > 0) {
+      const scoreLabel = totalScore <= 5 ? '低' : totalScore <= 15 ? '中' : '高';
+      foundWarnings.unshift(`AI 味评分: ${totalScore} (${scoreLabel}) — ${foundWarnings.length} 项问题`);
+    }
 
     setGreaseWarnings(foundWarnings);
   }, [editingDraft]);
