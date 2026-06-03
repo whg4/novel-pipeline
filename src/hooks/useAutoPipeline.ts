@@ -5,6 +5,7 @@ import type { Project, Skill } from '../types';
 import {
   runLLMStream, compileOutlinePrompt, compileChapterPrompt, compileBlurbPrompt,
   compileTitlePrompt, compileCoverPrompt, compileLogicReviewPrompt,
+  parseLogicReviewResult,
   validateOutlineAgainstChecklist, OUTLINE_CHECKLIST_ITEMS,
   extractAndSaveStoryMemory,
   LLM_PAUSED_ERROR
@@ -335,6 +336,60 @@ export function useAutoPipeline(
             }, streamOptions);
             await db.chapters.update(ch.id!, { logicCheckLog: reviewAcc });
             autoState.partialText = '';
+            checkPause();
+
+            // 审查驱动自动重写：若时间线或人物行为有冲突，自动重写并重新审查（最多 2 轮）
+            const MAX_REWRITE_ROUNDS = 2;
+            for (let round = 0; round < MAX_REWRITE_ROUNDS; round++) {
+              const reviewResult = parseLogicReviewResult(reviewAcc);
+              const criticalFailures = [
+                !reviewResult.timeline.passed && `时间线问题：${reviewResult.timeline.detail}`,
+                !reviewResult.characters.passed && `人物行为问题：${reviewResult.characters.detail}`,
+              ].filter(Boolean);
+
+              if (criticalFailures.length === 0) break;
+
+              setAutoProgress({
+                step: `修正第 ${ch.chapterNumber} 章（第 ${round + 1} 轮）`,
+                current: 2 + i * 2 + 2, total: totalSteps,
+              });
+
+              // 用审查失败项作为重写指令
+              const rewritePrompt = `根据以下逻辑审查问题修正本章：\n${criticalFailures.join('\n')}`;
+              const rewriteComp = compileChapterPrompt({
+                outline: currentOutline,
+                chapterNum: ch.chapterNumber,
+                chapterOutline: ch.outlineSection,
+                previousChapters: prevChs,
+                skills,
+                regenerationPrompt: rewritePrompt,
+                extraSkillKeys: ch.extraSkillKeys || [],
+                extraSkillText: ch.extraSkillText || '',
+                storyMemory: currentStoryMemory,
+              });
+              let rewriteAcc = '';
+              await runLLMStream('chapter', rewriteComp.system, rewriteComp.user, tok => {
+                rewriteAcc += tok;
+              }, streamOptions);
+              await db.chapters.update(ch.id!, { content: rewriteAcc, lastEdited: Date.now() });
+              allChapters[i] = { ...allChapters[i], content: rewriteAcc };
+              if (activeChapterId === ch.id) uiSetters.setEditingContent(rewriteAcc);
+              checkPause();
+
+              // 重新审查
+              const reReviewComp = compileLogicReviewPrompt(rewriteAcc, ch.chapterNumber, logicSkill, true, {
+                chapterOutline: ch.outlineSection || undefined,
+                storyMemory: currentStoryMemory,
+                background: project.background,
+                characters: project.characters,
+              });
+              reviewAcc = '';
+              await runLLMStream('review', reReviewComp.system, reReviewComp.user, tok => {
+                reviewAcc += tok;
+              }, streamOptions);
+              await db.chapters.update(ch.id!, { logicCheckLog: reviewAcc });
+              checkPause();
+            }
           }
           autoState.phase = 'chapter';
           autoState.chapterIndex = i + 1;

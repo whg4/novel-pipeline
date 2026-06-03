@@ -919,7 +919,15 @@ ${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}
   }
 
   const memorySection = storyMemory
-    ? `\n--- 故事记忆（已发生的关键事实）---\n角色状态：${storyMemory.characterStates}\n未收伏笔：${storyMemory.openForeshadowing}\n关键事件：${storyMemory.keyEvents}\n`
+    ? `\n--- 故事记忆（已发生的关键事实）---\n角色状态：${storyMemory.characterStates}\n未收伏笔：${storyMemory.openForeshadowing}\n关键事件：${storyMemory.keyEvents}\n${
+      storyMemory.timeline?.length
+        ? `关键事件时间线：\n${storyMemory.timeline.slice(-10).map(t => `第${t.chapter}章: ${t.event}`).join('\n')}\n`
+        : ''
+    }${
+      storyMemory.foreshadowingList?.length
+        ? `伏笔状态：\n${storyMemory.foreshadowingList.filter(f => f.status === 'planted').map(f => `未收: ${f.text}`).join('\n')}\n`
+        : ''
+    }`
     : '';
 
   let user = `
@@ -1127,16 +1135,24 @@ export function compileStoryMemoryExtractionPrompt(
 ): { system: string; user: string } {
   const system = `你是一位小说连续性分析专家。你的任务是从章节正文中提取关键的连续性信息，用于帮助后续章节的创作保持一致性。
 你必须输出严格 JSON，不要 Markdown，不要解释。JSON 结构如下：
-{"characterStates":"角色当前状态摘要","openForeshadowing":"未收伏笔清单","keyEvents":"影响后续剧情的关键事件"}
-每项用简洁的中文描述，不超过 200 字。`;
+{
+  "characterStates": "角色当前状态摘要（简洁，不超过 200 字）",
+  "openForeshadowing": "未收伏笔清单（简洁，不超过 200 字）",
+  "keyEvents": "影响后续剧情的关键事件（简洁，不超过 200 字）",
+  "timeline": [{"chapter": 章节号, "event": "事件描述"}],
+  "foreshadowingList": [{"text": "伏笔内容", "status": "planted/resolved/abandoned", "chapter": 关联章节号}]
+}
+timeline 只记录本章新发生的关键事件。foreshadowingList 记录伏笔的当前状态变化。`;
 
   const prevSection = previousMemory
     ? `--- 之前的故事记忆 ---
 角色状态：${previousMemory.characterStates}
 未收伏笔：${previousMemory.openForeshadowing}
 关键事件：${previousMemory.keyEvents}
+已有时间线：${JSON.stringify(previousMemory.timeline || [])}
+已有伏笔列表：${JSON.stringify(previousMemory.foreshadowingList || [])}
 
-请在此基础上更新（保留仍有效的信息，追加新信息，移除已解决的伏笔）。`
+请在此基础上更新（保留仍有效的信息，追加新信息，标记已解决的伏笔为 resolved）。`
     : '这是第一章，从零开始提取。';
 
   const user = `
@@ -1173,6 +1189,12 @@ export async function extractAndSaveStoryMemory(
       characterStates: typeof parsed.characterStates === 'string' ? parsed.characterStates : '',
       openForeshadowing: typeof parsed.openForeshadowing === 'string' ? parsed.openForeshadowing : '',
       keyEvents: typeof parsed.keyEvents === 'string' ? parsed.keyEvents : '',
+      timeline: Array.isArray(parsed.timeline)
+        ? [...(previousMemory?.timeline || []), ...parsed.timeline].slice(-50)
+        : previousMemory?.timeline || [],
+      foreshadowingList: Array.isArray(parsed.foreshadowingList)
+        ? parsed.foreshadowingList
+        : previousMemory?.foreshadowingList || [],
       updatedAt: Date.now(),
     };
 

@@ -16,6 +16,8 @@ import {
   CopyOutlined,
   DeleteOutlined,
   MoreOutlined,
+  ArrowUpOutlined,
+  ArrowDownOutlined,
 } from '@ant-design/icons';
 import ChatPanel from '../ChatPanel';
 import SkillSelectorModal from '../SkillSelectorModal';
@@ -103,6 +105,20 @@ export default function DraftingRoom({
   setShowChapterOutlineEditor,
   setViewingChapter,
 }: DraftingRoomProps) {
+  // ── 章节排序 ──
+  const handleMoveChapter = async (ch: Chapter, direction: 'up' | 'down') => {
+    const idx = chapters.findIndex(c => c.id === ch.id);
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= chapters.length) return;
+
+    const target = chapters[targetIdx];
+    // 交换 chapterNumber
+    if (ch.id && target.id) {
+      await db.chapters.update(ch.id, { chapterNumber: target.chapterNumber, lastEdited: Date.now() });
+      await db.chapters.update(target.id, { chapterNumber: ch.chapterNumber, lastEdited: Date.now() });
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
       {/* ── Chapter selector sidebar ── */}
@@ -160,7 +176,7 @@ export default function DraftingRoom({
           </div>
 
           <div className="space-y-1">
-            {chapters.map((ch) => (
+            {chapters.map((ch, idx) => (
               <button
                 key={ch.id}
                 onClick={() => handleSelectChapter(ch)}
@@ -174,6 +190,22 @@ export default function DraftingRoom({
                   第 {ch.chapterNumber} 章: {ch.title.split(':').pop()?.trim()}
                 </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Button
+                    type="text" size="small"
+                    icon={<ArrowUpOutlined style={{ fontSize: 10 }} />}
+                    onClick={(e) => { e.stopPropagation(); handleMoveChapter(ch, 'up'); }}
+                    disabled={idx === 0}
+                    title="上移"
+                    style={{ padding: 0, minWidth: 'auto', height: 'auto', opacity: idx === 0 ? 0.3 : 0.6 }}
+                  />
+                  <Button
+                    type="text" size="small"
+                    icon={<ArrowDownOutlined style={{ fontSize: 10 }} />}
+                    onClick={(e) => { e.stopPropagation(); handleMoveChapter(ch, 'down'); }}
+                    disabled={idx === chapters.length - 1}
+                    title="下移"
+                    style={{ padding: 0, minWidth: 'auto', height: 'auto', opacity: idx === chapters.length - 1 ? 0.3 : 0.6 }}
+                  />
                   {ch.content && (
                     <Button
                       type="text"

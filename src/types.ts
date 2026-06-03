@@ -2,6 +2,10 @@ export interface StoryMemory {
   characterStates: string;      // 当前角色状态（已知关系、立场、能力、物品持有）
   openForeshadowing: string;    // 未收伏笔（已埋设但未揭示的线索）
   keyEvents: string;            // 关键事件摘要（影响后续剧情走向的重大事件）
+  /** 结构化时间线：按章节记录关键事件 */
+  timeline: { chapter: number; event: string }[];
+  /** 结构化伏笔追踪 */
+  foreshadowingList: { text: string; status: 'planted' | 'resolved' | 'abandoned'; chapter?: number }[];
   updatedAt: number;
 }
 
