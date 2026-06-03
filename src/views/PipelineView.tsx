@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { message as antdMessage } from 'antd';
+import { message as antdMessage, Dropdown } from 'antd';
 import { db } from '../db';
 import type { ChatMessage } from '../types';
 import { stripLogicReview, sanitizeMarkdownFileName, syncOutlineChaptersToDb } from '../utils/pipeline';
@@ -43,6 +43,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationOutput, setGenerationOutput] = useState('');
   const [pipelineTab, setPipelineTab] = useState<'outline' | 'drafting' | 'marketing'>('outline');
+  const [userManuallySwitched, setUserManuallySwitched] = useState(false);
   const [editingProjectTitle, setEditingProjectTitle] = useState('');
   const [showTitleModal, setShowTitleModal] = useState(false);
   const [showExampleModal, setShowExampleModal] = useState(false);
@@ -57,6 +58,17 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
       setEditingProjectTitle(project.title);
     }
   }, [project?.title]);
+
+  // 状态驱动 Tab 自动切换（仅首次进入时生效，用户手动切换后不再干预）
+  useEffect(() => {
+    if (!project || userManuallySwitched) return;
+    const hasOutline = project.outline && project.outline.length >= 50;
+    const hasContent = chapters.some(c => c.content && c.content.length >= 100);
+
+    if (!hasOutline) setPipelineTab('outline');
+    else if (hasOutline && !hasContent) setPipelineTab('drafting');
+    else if (hasContent) setPipelineTab('drafting');
+  }, [project?.outline, chapters.length]);
 
   // ---- Hook: 章节写作（需先定义以获取 activeChapterId）----
   const chapterDraftHook = useChapterDrafting(
@@ -177,20 +189,81 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           </button>
 
           {!autoHook.isAutoRunning && !pausedTask && (
-            <button
-              onClick={() => autoHook.handleRunAutoPipeline(false)}
-              disabled={isGenerating}
-              className="flex items-center gap-1.5 bg-black hover:bg-[#333] disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 transition"
-            >
-              <Play size={12} /> 一键全自动
-            </button>
+            chapters.length > 1 ? (
+              <Dropdown
+                menu={{
+                  items: [
+                    { key: 'all', label: '从头开始（全部）', onClick: () => autoHook.handleRunAutoPipeline(false) },
+                    { type: 'divider' as const },
+                    ...chapters.map((ch, i) => ({
+                      key: `ch-${i}`,
+                      label: `从第 ${ch.chapterNumber} 章开始`,
+                      disabled: !project.outline || project.outline.length < 50,
+                      onClick: () => autoHook.handleRunAutoPipeline(false, i),
+                    })),
+                  ],
+                }}
+                trigger={['click']}
+              >
+                <button
+                  disabled={isGenerating}
+                  className="flex items-center gap-1.5 bg-black hover:bg-[#333] disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 transition"
+                >
+                  <Play size={12} /> 一键全自动 ▾
+                </button>
+              </Dropdown>
+            ) : (
+              <button
+                onClick={() => autoHook.handleRunAutoPipeline(false)}
+                disabled={isGenerating}
+                className="flex items-center gap-1.5 bg-black hover:bg-[#333] disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 transition"
+              >
+                <Play size={12} /> 一键全自动
+              </button>
+            )
           )}
+
+          {/* 状态引导卡片 */}
+          {(() => {
+            const hasOutline = project.outline && project.outline.length >= 50;
+            const hasContent = chapters.filter(c => c.content && c.content.length >= 100).length;
+            const totalChapters = chapters.length;
+
+            if (!hasOutline) {
+              return (
+                <div className="bg-[#f0f5ff] border border-[#d6e4ff] px-4 py-2.5 mb-2 flex items-center gap-3 text-xs">
+                  <span className="text-[#1677ff] font-bold">📝 第一步</span>
+                  <span className="text-[#333]">点击「一键全自动」或「生成大纲」开始创作</span>
+                  {!project.rawExample && (
+                    <span className="text-[#fa8c16] ml-auto font-semibold">⚠ 请先上传例文</span>
+                  )}
+                </div>
+              );
+            }
+            if (hasOutline && !hasContent) {
+              return (
+                <div className="bg-[#f6ffed] border border-[#d9f7be] px-4 py-2.5 mb-2 flex items-center gap-3 text-xs">
+                  <span className="text-[#52c41a] font-bold">📖 第二步</span>
+                  <span className="text-[#333]">大纲已就绪，共 {totalChapters} 章。切换到「写作间」逐章生成正文</span>
+                </div>
+              );
+            }
+            if (hasContent > 0 && hasContent < totalChapters) {
+              return (
+                <div className="bg-[#fff7e6] border border-[#ffe0b2] px-4 py-2.5 mb-2 flex items-center gap-3 text-xs">
+                  <span className="text-[#fa8c16] font-bold">✍️ 进行中</span>
+                  <span className="text-[#333]">已完成 {hasContent}/{totalChapters} 章。继续写作或使用「一键全自动」补全剩余章节</span>
+                </div>
+              );
+            }
+            return null;
+          })()}
 
           <div className="flex border-b border-[#eaeaea]">
             {(['outline', 'drafting', 'marketing'] as const).map(tab => (
               <button
                 key={tab}
-                onClick={() => setPipelineTab(tab)}
+                onClick={() => { setPipelineTab(tab); setUserManuallySwitched(true); }}
                 className={`flex items-center gap-1.5 px-4 py-2 text-xs font-semibold border-b-2 transition -mb-px ${
                   pipelineTab === tab ? 'border-black text-black' : 'border-transparent text-[#696b72] hover:text-[#171717]'
                 }`}
@@ -257,6 +330,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           skills={skills}
           activeChapterId={chapterDraftHook.activeChapterId}
           isGenerating={isGenerating}
+          saveStatus={chapterDraftHook.saveStatus}
           activeTask={activeTask}
           editingOutline={chapterDraftHook.editingOutline}
           editingDraft={chapterDraftHook.editingDraft}

@@ -119,18 +119,20 @@ export function useAutoPipeline(
     }
   }, [projectId]);
 
-  const handleRunAutoPipeline = async (resume = false) => {
+  const handleRunAutoPipeline = async (resume = false, startFromChapter?: number) => {
     if (!project) return;
     const streamOptions = taskControl.beginGenerationTask('auto', resume);
     const savedAutoState = resume ? autoResumeRef.current ?? loadAutoResumeState(projectId) : null;
     const autoState: AutoPipelineResumeState = savedAutoState
       ? savedAutoState
       : {
-        phase: project.outline && project.outline.length >= 50 ? 'sync' : 'outline',
+        phase: startFromChapter != null
+          ? 'chapter'
+          : project.outline && project.outline.length >= 50 ? 'sync' : 'outline',
         currentOutline: project.outline || '',
         outlineAttempt: 1,
         validationFeedback: '',
-        chapterIndex: 0,
+        chapterIndex: startFromChapter ?? 0,
         partialText: '',
         totalSteps: 7,
       };

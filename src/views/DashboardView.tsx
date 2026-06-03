@@ -5,6 +5,7 @@ import { db } from '../db';
 import { Project } from '../types';
 import { Plus, BookOpen, Clock, Tag, History, Trash2, Award, FileUp, Download, Upload } from 'lucide-react';
 import { exportProject, importProject } from '../utils/projectIO';
+import { getTemplates, saveTemplate } from '../utils/templates';
 
 interface DashboardViewProps {
   onSelectProject: (projectId: number) => void;
@@ -22,6 +23,7 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
   const [rawExample, setRawExample] = useState('');
   const [showGuide, setShowGuide] = useState(false);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const templates = getTemplates();
 
   const getChapterCount = (projectId: number) => {
     return chapters.filter(c => c.projectId === projectId).length;
@@ -243,19 +245,42 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
         )}
       </div>
 
-      {/* New Project Modal */}
+      {/* New Project Modal — 例文优先 */}
       {showModal && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white border border-[#eaeaea] max-w-2xl w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto space-y-5">
-            <div className="border-b border-[#171717] pb-4">
+          <div className="bg-white border border-[#eaeaea] max-w-2xl w-full p-6 shadow-xl max-h-[90vh] overflow-y-auto space-y-4">
+            <div className="border-b border-[#171717] pb-3">
               <h3 className="font-sans text-2xl font-black text-[#171717]">新建小说项目</h3>
-              <div className="w-8 h-0.5 bg-black mt-2" />
+              <p className="text-[11px] text-[#888] mt-1">粘贴例文，系统将复刻其节奏和结构，生成你的原创故事</p>
             </div>
             <form onSubmit={handleCreateProject} className="space-y-4">
-              {/* 例文 — 放到最上方 */}
+              {/* 模板选择 */}
+              {templates.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] font-bold text-[#888] uppercase">快速填充：</span>
+                  {templates.map((t, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => {
+                        setGenre(t.genre);
+                        setBackground(t.background);
+                        setCharacters(t.characters);
+                      }}
+                      className="text-[10px] px-2 py-0.5 border border-[#eaeaea] hover:border-black hover:bg-[#f5f5f5] transition"
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {/* 核心：例文 — 占最大面积 */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
-                  <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.15em]">例文原文 <span className="font-normal normal-case text-[#d4d4d4]">（推荐上传或粘贴）</span></label>
+                  <label className="text-[11px] font-bold text-[#171717]">
+                    📝 例文原文 <span className="text-[#00a63e] font-normal">（最重要！决定仿写质量）</span>
+                  </label>
                   <label className="flex items-center gap-1 bg-white border border-[#eaeaea] hover:bg-[#f5f5f5] text-[#696b72] text-[10px] font-bold px-2 py-1 cursor-pointer transition">
                     <FileUp size={11} /> 上传 TXT
                     <input
@@ -276,70 +301,104 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
                 <textarea
                   value={rawExample}
                   onChange={(e) => setRawExample(e.target.value)}
-                  className="w-full h-32 bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm font-mono text-xs text-[#171717] focus:outline-none focus:border-black focus:ring-1 focus:ring-black resize-none"
-                  placeholder="粘贴要仿写的例文。系统会复刻情绪线、爽点、节奏和结构，但替换成新背景、新人物、新事件。"
+                  className="w-full h-44 bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm font-mono text-xs text-[#171717] focus:outline-none focus:border-black focus:ring-1 focus:ring-black resize-none"
+                  placeholder="粘贴要仿写的例文原文（建议 2000 字以上）...&#10;&#10;系统会分析其情绪线、爽点节奏、场景结构，然后用你设定的新背景和新人物重新生成。"
                 />
+                {rawExample && (
+                  <div className="text-[10px] text-[#888]">{rawExample.length.toLocaleString()} 字</div>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.15em]">书名 <span className="font-normal normal-case text-[#d4d4d4]">（选填，可由 AI 生成备选）</span></label>
+              {/* 紧凑行：书名 + 题材 */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2 space-y-1">
+                  <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.1em]">书名</label>
                   <input
                     type="text"
                     value={title}
                     onChange={(e) => setTitle(e.target.value)}
-                    className="w-full bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm text-[#171717] focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
-                    placeholder="例如：月下纯血（选填）"
+                    className="w-full bg-[#f9f9f9] border border-[#eaeaea] px-3 py-1.5 text-sm text-[#171717] focus:outline-none focus:border-black"
+                    placeholder="选填，可稍后由 AI 生成"
                   />
                 </div>
-                <div className="space-y-1.5">
-                  <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.15em]">题材与规则</label>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.1em]">题材</label>
                   <select
                     value={genre}
                     onChange={(e) => setGenre(e.target.value)}
-                    className="w-full bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm text-[#171717] focus:outline-none focus:border-black focus:ring-1 focus:ring-black"
+                    className="w-full bg-[#f9f9f9] border border-[#eaeaea] px-3 py-1.5 text-sm text-[#171717] focus:outline-none focus:border-black"
                   >
-                    <option value="general">通用小说</option>
-                    <option value="classic-wolf">欧美狼人设定</option>
-                    <option value="female-slap">大女主打脸闭环</option>
+                    <option value="general">通用</option>
+                    <option value="classic-wolf">狼人</option>
+                    <option value="female-slap">打脸</option>
                   </select>
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.15em]">世界观与背景</label>
-                <textarea
-                  value={background}
-                  onChange={(e) => setBackground(e.target.value)}
-                  className="w-full h-20 bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm text-[#171717] focus:outline-none focus:border-black focus:ring-1 focus:ring-black resize-none"
-                  placeholder="填写故事背景，例如狼族部落、豪门集团、娱乐圈、古早虐恋背景等。"
-                />
-              </div>
+              {/* 高级设置：可折叠 */}
+              <details className="border border-[#eaeaea] rounded">
+                <summary className="px-3 py-2 text-[11px] font-bold text-[#888] cursor-pointer hover:bg-[#f9f9f9] select-none">
+                  高级设置：背景与人物 <span className="font-normal text-[#bbb]">（可选，后续随时补充）</span>
+                </summary>
+                <div className="px-3 pb-3 space-y-3">
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.1em]">世界观与背景</label>
+                    <textarea
+                      value={background}
+                      onChange={(e) => setBackground(e.target.value)}
+                      className="w-full h-20 bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-xs text-[#171717] focus:outline-none focus:border-black resize-none"
+                      placeholder="狼族部落、豪门集团、娱乐圈..."
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.1em]">主要人物设定</label>
+                    <textarea
+                      value={characters}
+                      onChange={(e) => setCharacters(e.target.value)}
+                      className="w-full h-20 bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-xs text-[#171717] focus:outline-none focus:border-black resize-none"
+                      placeholder="女主、男主、反派、隐藏身份..."
+                    />
+                  </div>
+                </div>
+              </details>
 
-              <div className="space-y-1.5">
-                <label className="text-[10px] font-bold text-[#888888] uppercase tracking-[0.15em]">主要人物设定</label>
-                <textarea
-                  value={characters}
-                  onChange={(e) => setCharacters(e.target.value)}
-                  className="w-full h-20 bg-[#f9f9f9] border border-[#eaeaea] px-3 py-2 text-sm text-[#171717] focus:outline-none focus:border-black focus:ring-1 focus:ring-black resize-none"
-                  placeholder="填写女主、男主、反派、隐藏身份、专业领域、误会物证等关键信息。"
-                />
-              </div>
-
-              <div className="flex justify-end gap-3 border-t border-[#eaeaea] pt-4 mt-2">
+              <div className="flex justify-between items-center border-t border-[#eaeaea] pt-3">
                 <button
                   type="button"
-                  onClick={() => setShowModal(false)}
-                  className="border border-[#eaeaea] text-[#696b72] hover:bg-[#f5f5f5] font-semibold px-4 py-2 text-sm transition"
+                  onClick={() => {
+                    const name = prompt('模板名称：');
+                    if (name?.trim()) {
+                      saveTemplate({
+                        name: name.trim(),
+                        genre,
+                        background,
+                        characters,
+                        defaultSkillKeys: [],
+                        createdAt: Date.now(),
+                      });
+                      antdMessage.success(`模板「${name.trim()}」已保存`);
+                    }
+                  }}
+                  className="text-[10px] text-[#888] hover:text-black transition underline"
                 >
-                  取消
+                  保存为模板
                 </button>
-                <button
-                  type="submit"
-                  className="bg-black hover:bg-[#333] text-white font-bold px-5 py-2 text-sm transition"
-                >
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    className="border border-[#eaeaea] text-[#696b72] hover:bg-[#f5f5f5] font-semibold px-4 py-1.5 text-sm transition"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!rawExample.trim()}
+                    className="bg-black hover:bg-[#333] disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold px-5 py-1.5 text-sm transition"
+                  >
                   创建项目
-                </button>
+                  </button>
+                </div>
               </div>
             </form>
           </div>

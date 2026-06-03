@@ -32,6 +32,7 @@ interface DraftingRoomProps {
   skills: Skill[];
   activeChapterId: number | null;
   isGenerating: boolean;
+  saveStatus?: 'idle' | 'pending' | 'saved';
   activeTask: GenerationTask | null;
   editingOutline: string;
   editingDraft: string;
@@ -72,6 +73,7 @@ export default function DraftingRoom({
   skills,
   activeChapterId,
   isGenerating,
+  saveStatus,
   activeTask,
   editingOutline,
   editingDraft,
@@ -325,6 +327,16 @@ export default function DraftingRoom({
 
       {/* ── ChatPanel area ── */}
       <div className="xl:col-span-3 space-y-3">
+        {/* 自动保存状态 */}
+        {saveStatus && saveStatus !== 'idle' && (
+          <div style={{
+            fontSize: 10, color: saveStatus === 'saved' ? '#00a63e' : '#888',
+            textAlign: 'right', padding: '0 4px',
+          }}>
+            {saveStatus === 'pending' ? '⏳ 正在保存...' : '✓ 已自动保存'}
+          </div>
+        )}
+
         {/* Grease warnings */}
         {greaseWarnings.length > 0 && (
           <Alert

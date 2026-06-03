@@ -139,6 +139,7 @@ export function useChapterDrafting(
   // ── 自动保存（编辑后 2 秒 debounce）──
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedDraftRef = useRef<string>('');
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saved'>('idle');
 
   useEffect(() => {
     // 生成中不自动保存（由生成流程自行保存）
@@ -146,10 +147,11 @@ export function useChapterDrafting(
     // 内容未变化则跳过
     if (editingDraft === lastSavedDraftRef.current) return;
 
+    setSaveStatus('pending');
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
       const ch = chapters.find(c => c.id === activeChapterId);
-      if (!ch || ch.content === editingDraft) return;
+      if (!ch || ch.content === editingDraft) { setSaveStatus('idle'); return; }
       const updatedHistory = [...(ch.versionHistory || [])];
       if (ch.content) {
         updatedHistory.push({ content: ch.content, timestamp: Date.now() });
@@ -160,6 +162,8 @@ export function useChapterDrafting(
         lastEdited: Date.now(),
       });
       lastSavedDraftRef.current = editingDraft;
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
     }, 2000);
 
     return () => {
@@ -428,6 +432,7 @@ export function useChapterDrafting(
     chapterRegenerationPrompt,
     chapterExtraSkillKeys,
     chapterExtraSkillTexts,
+    saveStatus,
     chapterChatMessages,
     logicReviewOutput,
     handleSelectChapter,
