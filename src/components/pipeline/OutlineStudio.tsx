@@ -115,13 +115,15 @@ export default function OutlineStudio({
         onUseReviewSuggestion={handleUseOutlineReviewSuggestion}
         disabled={!project}
         placeholder="输入修改意见后按 Enter 发送，或点击上方按钮直接生成大纲..."
+        emptyTitle="大纲工作台"
+        emptyDescription="点击「生成大纲」开始，或在下方输入修改意见"
         toolbar={
           <Space size={6} wrap>
             <Tooltip title={isGenerating ? '正在生成中' : ''}>
               <Button
                 type="primary"
                 size="small"
-                icon={<ThunderboltOutlined spin={activeTask === 'outline' && isGenerating} />}
+                icon={<ThunderboltOutlined />}
                 disabled={isGenerating}
                 onClick={() => handleOutlineChatSend('')}
               >
@@ -133,7 +135,7 @@ export default function OutlineStudio({
             <Tooltip title={!project.outline ? '请先生成大纲' : ''}>
               <Button
                 size="small"
-                icon={<AuditOutlined spin={activeTask === 'outline-review' && isGenerating} />}
+                icon={<AuditOutlined />}
                 disabled={isGenerating || !project.outline}
                 onClick={() => handleReviewOutline()}
               >

@@ -304,13 +304,16 @@ export default function DraftingRoom({
             onEditResend={onEditResend}
             onUseReviewSuggestion={handleUseReviewSuggestion}
             placeholder="输入重写建议后按 Enter 发送，或点击上方按钮直接生成正文..."
+            errorMessage={chapterError}
+            emptyTitle="章节写作间"
+            emptyDescription="从左侧选择章节，或点击「生成正文」开始写作"
             toolbar={
               <Space size={6} wrap>
                 <Tooltip title={isGenerating ? '正在生成中' : ''}>
                   <Button
                     type="primary"
                     size="small"
-                    icon={<ThunderboltOutlined spin={activeTask === 'chapter' && isGenerating} />}
+                    icon={<ThunderboltOutlined />}
                     disabled={isGenerating}
                     onClick={() => handleChapterChatSend('')}
                   >
@@ -322,7 +325,7 @@ export default function DraftingRoom({
                 <Tooltip title={isGenerating ? '正在生成中' : ''}>
                   <Button
                     size="small"
-                    icon={<AuditOutlined spin={activeTask === 'review' && isGenerating} />}
+                    icon={<AuditOutlined />}
                     disabled={isGenerating}
                     onClick={() => {
                       const ch = chapters.find((c) => c.id === activeChapterId);

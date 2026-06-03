@@ -13,6 +13,8 @@ import {
   CloseOutlined,
   StopOutlined,
   ArrowDownOutlined,
+  ExportOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import type { ChatMessage } from '../types';
 
@@ -28,9 +30,14 @@ interface ChatPanelProps {
   onRegenerate?: () => void;
   onUseReviewSuggestion?: (reviewContent: string) => void;
   onEditResend?: (messageId: number, newContent: string) => void;
+  /** 外部错误信息（显示在对话流底部） */
+  errorMessage?: string | null;
   disabled?: boolean;
   placeholder?: string;
   className?: string;
+  /** 空状态引导文案 */
+  emptyTitle?: string;
+  emptyDescription?: string;
 }
 
 // ── 工具函数 ──
@@ -42,6 +49,18 @@ function exportMd(content: string) {
   a.download = `导出-${Date.now()}.md`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function exportConversation(messages: ChatMessage[]) {
+  if (messages.length === 0) return;
+  const lines = messages.map(msg => {
+    const role = msg.role === 'user' ? '👤 用户' : '🤖 AI';
+    const kind = msg.kind ? ` [${kindLabels[msg.kind] || msg.kind}]` : '';
+    return `### ${role}${kind}\n\n${msg.content}\n`;
+  });
+  const md = `# 对话记录\n\n${lines.join('\n---\n\n')}`;
+  exportMd(md);
+  antdMessage.success('对话已导出');
 }
 
 function formatTime(ts: number): string {
@@ -173,15 +192,30 @@ export default function ChatPanel({
   onRegenerate,
   onUseReviewSuggestion,
   onEditResend,
+  errorMessage,
   disabled,
   placeholder,
   className = '',
+  emptyTitle,
+  emptyDescription,
 }: ChatPanelProps) {
   const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editText, setEditText] = useState('');
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // ── Escape 快捷键停止生成 ──
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isStreaming && onPause) {
+        e.preventDefault();
+        onPause();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isStreaming, onPause]);
 
   // ── 滚动到底部检测 ──
   const checkScroll = useCallback(() => {
@@ -200,6 +234,14 @@ export default function ChatPanel({
 
   const scrollToBottom = () => {
     scrollContainerRef.current?.scrollTo({ top: scrollContainerRef.current.scrollHeight, behavior: 'smooth' });
+  };
+
+  // ── 自动聚焦输入框 ──
+  const focusInput = () => {
+    setTimeout(() => {
+      const textarea = document.querySelector('.ant-sender .ant-input, .ant-sender textarea') as HTMLTextAreaElement | null;
+      textarea?.focus();
+    }, 80);
   };
 
   // ── 编辑重发逻辑 ──
@@ -344,14 +386,16 @@ export default function ChatPanel({
       placement: 'start' as const,
       variant: 'borderless' as const,
       contentRender: (content: string) => (
-        <XMarkdown
-          content={content}
-          streaming={
-            isStreaming && bubbleItems[bubbleItems.length - 1]?.content === content
-              ? { tail: true }
-              : undefined
-          }
-        />
+        <div style={{ overflowX: 'auto', maxWidth: '100%' }}>
+          <XMarkdown
+            content={content}
+            streaming={
+              isStreaming && bubbleItems[bubbleItems.length - 1]?.content === content
+                ? { tail: true }
+                : undefined
+            }
+          />
+        </div>
       ),
       style: {
         width: '100%',
@@ -391,8 +435,8 @@ export default function ChatPanel({
             <Welcome
               variant="borderless"
               icon={<MessageOutlined style={{ fontSize: 32, color: '#d4d4d4' }} />}
-              title="还没有对话记录"
-              description="点击上方操作按钮或在下方输入内容开始"
+              title={emptyTitle || '还没有对话记录'}
+              description={emptyDescription || '点击上方操作按钮或在下方输入内容开始'}
             />
           </div>
         ) : (
@@ -425,11 +469,27 @@ export default function ChatPanel({
             justifyContent: 'center',
             boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
             zIndex: 10,
-            transition: 'opacity 0.2s',
           }}
         >
           <ArrowDownOutlined style={{ fontSize: 14, color: '#666' }} />
         </button>
+      )}
+
+      {/* ── 错误消息 ── */}
+      {errorMessage && !isStreaming && (
+        <div style={{ padding: '0 16px 8px', flexShrink: 0 }}>
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: '8px 12px', borderRadius: 8,
+              background: '#fef2f2', border: '1px solid #fecaca',
+              fontSize: 12, color: '#dc2626',
+            }}
+          >
+            <ExclamationCircleOutlined style={{ flexShrink: 0 }} />
+            <span style={{ flex: 1 }}>{errorMessage}</span>
+          </div>
+        </div>
       )}
 
       {/* ── 流式输出时的停止按钮 ── */}
@@ -486,19 +546,30 @@ export default function ChatPanel({
             }}
           >
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, flex: 1 }}>{toolbar}</div>
-            {onClear && (
-              <Popconfirm
-                title="清除对话记录"
-                description="确认清除所有对话记录？"
-                onConfirm={onClear}
-                okText="确认"
-                cancelText="取消"
-              >
-                <Button size="small" icon={<DeleteOutlined />} danger>
-                  清屏
-                </Button>
-              </Popconfirm>
-            )}
+            <Space size={4}>
+              {messages.length > 0 && (
+                <Tooltip title="导出全部对话">
+                  <Button
+                    size="small"
+                    icon={<ExportOutlined />}
+                    onClick={() => exportConversation(messages)}
+                  />
+                </Tooltip>
+              )}
+              {onClear && (
+                <Popconfirm
+                  title="清除对话记录"
+                  description="确认清除所有对话记录？"
+                  onConfirm={onClear}
+                  okText="确认"
+                  cancelText="取消"
+                >
+                  <Button size="small" icon={<DeleteOutlined />} danger>
+                    清屏
+                  </Button>
+                </Popconfirm>
+              )}
+            </Space>
           </div>
         )}
         <Sender
@@ -508,16 +579,21 @@ export default function ChatPanel({
             if (!text.trim()) return;
             onSend(text);
             setInput('');
+            focusInput();
           }}
           loading={isStreaming}
           disabled={disabled}
-          placeholder={placeholder || '输入修改意见...'}
+          placeholder={
+            isStreaming
+              ? '生成中... 按 Escape 停止，可继续输入下一条'
+              : placeholder || '输入修改意见...'
+          }
           submitType="enter"
           autoSize={{ minRows: 1, maxRows: 8 }}
         />
       </div>
 
-      {/* ── hover 显隐样式 ── */}
+      {/* ── hover 显隐样式 + 流式光标动画 ── */}
       <style>{`
         .chat-actions {
           opacity: 0;
@@ -526,6 +602,19 @@ export default function ChatPanel({
         .ant-bubble:hover .chat-actions,
         .ant-bubble-wrapper:hover .chat-actions {
           opacity: 1;
+        }
+
+        /* 流式光标动画 */
+        @keyframes blink-cursor {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
+        }
+        .streaming-cursor::after {
+          content: '▌';
+          animation: blink-cursor 0.8s infinite;
+          color: #000;
+          font-weight: 400;
+          margin-left: 1px;
         }
       `}</style>
     </div>
