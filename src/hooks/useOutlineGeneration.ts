@@ -26,7 +26,6 @@ export function useOutlineGeneration(
 ) {
   const [outlineGenerationStatus, setOutlineGenerationStatus] = useState('');
   const [outlineReviewOutput, setOutlineReviewOutput] = useState('');
-  const [outlineFeedback, _setOutlineFeedback] = useState('');
   const [outlineExtraSkillKeys, setOutlineExtraSkillKeys] = useState<string[]>([]);
   const [outlineExtraSkillText, setOutlineExtraSkillText] = useState('');
 
@@ -36,7 +35,6 @@ export function useOutlineGeneration(
     if (!project) return;
     const streamOptions = beginGenerationTask('outline', resume);
     setIsGenerating(true);
-    if (!resume) _setOutlineFeedback('');
     setOutlineGenerationStatus(resume ? '继续生成大纲...' : '生成大纲中...');
     const template = skills.find(s => s.key === 'outline_template')?.content || '';
     const wolfSkill = project.genre === 'classic-wolf'
@@ -46,7 +44,9 @@ export function useOutlineGeneration(
       ? (skills.find(s => s.key === 'female_slap')?.content || '')
       : undefined);
 
-    const effectiveFeedback = feedbackOverride !== undefined ? feedbackOverride : outlineFeedback;
+    const effectiveFeedback = feedbackOverride || '';
+    let accumulated = resume ? (project.outline || '') : '';
+    let wasPaused = false;
 
     try {
       const compiled = compileOutlinePrompt(
@@ -71,9 +71,6 @@ export function useOutlineGeneration(
         compiled.user += `\n\n【历史修改要求（参考）】\n${recentFeedback}`;
       }
 
-      let accumulated = resume ? (project.outline || '') : '';
-      let wasPaused = false;
-
       await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
         accumulated += tok;
         setGenerationOutput?.(accumulated);
@@ -86,15 +83,19 @@ export function useOutlineGeneration(
       }
     } catch (e: any) {
       if (isPausedError(e)) {
+        wasPaused = true;
         markTaskPaused('outline');
         setOutlineGenerationStatus('已暂停，当前大纲片段已保留。');
+        if (accumulated) {
+          await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
+        }
       } else {
         alert(`大纲生成失败：${e.message}`);
         setOutlineGenerationStatus('大纲生成失败。');
       }
     } finally {
       setIsGenerating(false);
-      finishGenerationTask('outline');
+      finishGenerationTask('outline', wasPaused);
     }
   };
 
@@ -171,6 +172,8 @@ export function useOutlineGeneration(
     const extraSkillContents = outlineExtraSkillKeys
       .map(k => skills.find(s => s.key === k)?.content || '')
       .filter(Boolean);
+    let accumulated = '';
+    let wasPaused = false;
 
     try {
       const compiled = compileOutlineRevisionPrompt(
@@ -186,7 +189,6 @@ export function useOutlineGeneration(
         project.rawExample || undefined,
       );
 
-      let accumulated = '';
       await runLLMStream('outline', compiled.system, compiled.user, (tok) => {
         accumulated += tok;
         setGenerationOutput?.(accumulated);
@@ -194,28 +196,33 @@ export function useOutlineGeneration(
 
       await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
       setOutlineGenerationStatus('大纲已根据审查建议修订并保存。');
-      await db.chatMessages.add({
-        projectId, scope: 'outline', role: 'assistant', kind: 'outline',
-        content: accumulated, createdAt: Date.now(),
-      });
+      if (!wasPaused) {
+        await db.chatMessages.add({
+          projectId, scope: 'outline', role: 'assistant', kind: 'outline',
+          content: accumulated, createdAt: Date.now(),
+        });
+      }
     } catch (e: any) {
       if (isPausedError(e)) {
+        wasPaused = true;
         markTaskPaused('outline');
         setOutlineGenerationStatus('已暂停，修订片段已保留。');
+        if (accumulated) {
+          await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
+        }
       } else {
         alert(`大纲修订失败：${e.message}`);
         setOutlineGenerationStatus('大纲修订失败。');
       }
     } finally {
       setIsGenerating(false);
-      finishGenerationTask('outline');
+      finishGenerationTask('outline', wasPaused);
     }
   };
 
   return {
     outlineGenerationStatus,
     outlineReviewOutput,
-    outlineFeedback,
     outlineExtraSkillKeys,
     outlineExtraSkillText,
     setOutlineExtraSkillKeys,

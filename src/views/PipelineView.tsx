@@ -224,7 +224,6 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
           generationOutput={generationOutput}
           outlineReviewOutput={outlineHook.outlineReviewOutput}
           outlineGenerationStatus={outlineHook.outlineGenerationStatus}
-          outlineFeedback={outlineHook.outlineFeedback}
           outlineExtraSkillKeys={outlineHook.outlineExtraSkillKeys}
           outlineExtraSkillText={outlineHook.outlineExtraSkillText}
           showOutlineEditor={showOutlineEditor}

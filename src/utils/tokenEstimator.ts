@@ -27,8 +27,8 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
 
 const DEFAULT_CONTEXT_WINDOW = 32_000;
 
-// 匹配 CJK 统一表意文字（基本区 + 扩展 A/B）
-const CJK_REGEX = /[一-鿿㐀-䶿\U00020000-\U0002a6df]/;
+// 匹配 CJK 统一表意文字（基本区 + 扩展 A）
+const CJK_REGEX = /[一-鿿㐀-䶿]/;
 
 /**
  * 估算文本的 token 数量

@@ -25,7 +25,6 @@ interface OutlineStudioProps {
   generationOutput: string;
   outlineReviewOutput: string;
   outlineGenerationStatus: string;
-  outlineFeedback: string;
   outlineExtraSkillKeys: string[];
   outlineExtraSkillText: string;
   showOutlineEditor: boolean;

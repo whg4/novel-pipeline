@@ -178,7 +178,6 @@ export function getStageModelOverrides(): StageModelOverrides {
     }
   }
   return { ...DEFAULT_STAGE_MODEL_OVERRIDES };
-  return {};
 }
 
 export function saveStageModelOverride(stage: StageRole, model: string) {
@@ -895,7 +894,8 @@ ${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}
     const prev = previousChapters[previousChapters.length - 1];
     const prevText = prev.content;
     const lastPart = prevText.length > 1000 ? prevText.substring(prevText.length - 1000) : prevText;
-    precedingContext = `上一章（第 ${prev.chapterNumber} 章）结尾为：\n"${lastPart}"\n\n必须从此结尾无缝衔接，保证时间、空间和情绪的连续性，不留断层。`;
+    // 使用标记包裹，方便后续 token 裁剪时精准替换
+    precedingContext = `<<<PREV_CHAPTER>>>\n"${lastPart}"\n<<<END_PREV_CHAPTER>>>\n\n必须从此结尾无缝衔接，保证时间、空间和情绪的连续性，不留断层。`;
   }
 
   const memorySection = storyMemory
@@ -936,16 +936,21 @@ ${regenerationPrompt?.trim() ? `--- 本章重写建议（高优先级）---\n${r
 
   if (totalTokens > tokenBudget) {
     // 优先级 3：截断前文上下文（从 1000 字缩至 500 字）
-    user = user.replace(
-      /(上一章（第 \d+ 章）结尾为：\n")[\s\S]*?("\n\n必须从此结尾无缝衔接)/,
-      (_, prefix, suffix) => {
-        const prev = previousChapters[previousChapters.length - 1];
-        const shortened = prev.content.length > 500
-          ? prev.content.substring(prev.content.length - 500)
-          : prev.content;
-        return `${prefix}${shortened}${suffix}`;
-      },
-    );
+    // 使用标记分割而非正则，避免章节内容中的引号干扰
+    const prevMarker = '<<<PREV_CHAPTER>>>';
+    const prevEndMarker = '<<<END_PREV_CHAPTER>>>';
+    // 在构建 precedingContext 时已经包裹了标记（见上方）
+    if (user.includes(prevMarker) && user.includes(prevEndMarker)) {
+      const prev = previousChapters[previousChapters.length - 1];
+      const shortened = prev.content.length > 500
+        ? prev.content.substring(prev.content.length - 500)
+        : prev.content;
+      const newPrevSection = `${prevMarker}\n"${shortened}"\n${prevEndMarker}`;
+      user = user.replace(
+        new RegExp(`${prevMarker}[\\s\\S]*?${prevEndMarker}`),
+        newPrevSection,
+      );
+    }
     totalTokens = estimateTokens(system) + estimateTokens(user);
   }
 

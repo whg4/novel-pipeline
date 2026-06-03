@@ -149,8 +149,7 @@ export function useAutoPipeline(
       const outlineTemplate = skills.find(s => s.key === 'outline_template')?.content || '';
 
       // 加载当前故事记忆
-      const { db: dbImport } = await import('../db');
-      const currentProject = await dbImport.projects.get(projectId);
+      const currentProject = await db.projects.get(projectId);
       let currentStoryMemory = currentProject?.storyMemory;
 
       // Step 1: 生成大纲（结构化验证）
