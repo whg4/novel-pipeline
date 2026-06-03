@@ -113,9 +113,11 @@ export function parseOutlineChapters(
 }
 
 // 将解析结果写入数据库（已存在的章节同步 title + outlineSection，不覆盖 content）
-export async function syncOutlineChaptersToDb(outline: string, projectId: number): Promise<number> {
+// 返回 { count, staleChapters }，staleChapters 是大纲已变但已有正文的章节号列表
+export async function syncOutlineChaptersToDb(outline: string, projectId: number): Promise<{ count: number; staleChapters: number[] }> {
   const parsed = parseOutlineChapters(outline);
-  if (parsed.length === 0) return 0;
+  if (parsed.length === 0) return { count: 0, staleChapters: [] };
+  const staleChapters: number[] = [];
   for (const p of parsed) {
     const existing = await db.chapters
       .where('projectId').equals(projectId)
@@ -138,6 +140,10 @@ export async function syncOutlineChaptersToDb(outline: string, projectId: number
       const needsTitleUpdate = existing.title !== newTitle;
       const needsOutlineUpdate = existing.outlineSection !== p.outlineSection;
       if (needsTitleUpdate || needsOutlineUpdate) {
+        // 大纲有变且章节已有正文 → 标记为过期
+        if (needsOutlineUpdate && existing.content && existing.content.length >= 100) {
+          staleChapters.push(p.chapterNumber);
+        }
         const patch: Partial<Pick<typeof existing, 'title' | 'outlineSection' | 'lastEdited'>> = { lastEdited: Date.now() };
         if (needsTitleUpdate) patch.title = newTitle;
         if (needsOutlineUpdate) patch.outlineSection = p.outlineSection;
@@ -145,5 +151,5 @@ export async function syncOutlineChaptersToDb(outline: string, projectId: number
       }
     }
   }
-  return parsed.length;
+  return { count: parsed.length, staleChapters };
 }

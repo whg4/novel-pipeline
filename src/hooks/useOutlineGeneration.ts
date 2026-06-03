@@ -81,9 +81,10 @@ export function useOutlineGeneration(
       await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
       // 自动同步章节结构
       if (accumulated) {
-        const n = await syncOutlineChaptersToDb(accumulated, projectId);
+        const { count: n, staleChapters } = await syncOutlineChaptersToDb(accumulated, projectId);
+        const staleMsg = staleChapters.length > 0 ? `，第 ${staleChapters.join('、')} 章大纲已变建议重写` : '';
         setOutlineGenerationStatus(n > 0
-          ? `大纲已生成并保存，已同步 ${n} 个章节。`
+          ? `大纲已生成并保存，已同步 ${n} 个章节${staleMsg}。`
           : '大纲已生成并保存。');
       } else {
         setOutlineGenerationStatus('大纲已生成并保存。');
@@ -218,9 +219,10 @@ export function useOutlineGeneration(
       await db.projects.update(projectId, { outline: accumulated, outlineValidationUpdatedAt: Date.now() });
       // 自动同步章节结构
       if (accumulated) {
-        const n = await syncOutlineChaptersToDb(accumulated, projectId);
-        setOutlineGenerationStatus(n > 0
-          ? `大纲已修订并保存，已同步 ${n} 个章节。`
+        const { count: n2, staleChapters: stale2 } = await syncOutlineChaptersToDb(accumulated, projectId);
+        const staleMsg2 = stale2.length > 0 ? `，第 ${stale2.join('、')} 章大纲已变建议重写` : '';
+        setOutlineGenerationStatus(n2 > 0
+          ? `大纲已修订并保存，已同步 ${n2} 个章节${staleMsg2}。`
           : '大纲已修订并保存。');
       } else {
         setOutlineGenerationStatus('大纲已修订并保存。');

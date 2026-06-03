@@ -6,6 +6,12 @@ export interface StoryMemory {
   timeline: { chapter: number; event: string }[];
   /** 结构化伏笔追踪 */
   foreshadowingList: { text: string; status: 'planted' | 'resolved' | 'abandoned'; chapter?: number }[];
+  /** 每章摘要（1-2句），用于跨章节上下文 */
+  chapterSummaries: { chapter: number; summary: string }[];
+  /** 已分析到第几章（用于检测记忆是否过时） */
+  chaptersAnalyzed: number;
+  /** 上次提取是否成功 */
+  lastExtractionSuccess: boolean;
   updatedAt: number;
 }
 

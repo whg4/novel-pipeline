@@ -241,7 +241,10 @@ export function useAutoPipeline(
       if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.sync) {
         autoState.phase = 'sync';
         setAutoProgress({ step: '解析章节结构', current: 2, total: 7 });
-        const parsedCount = await syncOutlineChaptersToDb(currentOutline, projectId);
+        const { count: parsedCount, staleChapters } = await syncOutlineChaptersToDb(currentOutline, projectId);
+        if (staleChapters.length > 0) {
+          antdMessage.info(`第 ${staleChapters.join('、')} 章大纲已变更，将重新生成正文`);
+        }
         if (parsedCount === 0) {
           throw new Error(
             '未能从大纲中解析出章节。请确认大纲中每个章节标题使用以下格式之一：\n' +
@@ -292,6 +295,7 @@ export function useAutoPipeline(
               extraSkillKeys: ch.extraSkillKeys || [],
               extraSkillText: ch.extraSkillText || '',
               storyMemory: currentStoryMemory,
+              genre: project.genre,
             });
             if (resumingChapter) {
               chComp.user += `\n--- 已生成但暂停的正文片段 ---\n${autoState.partialText}\n\n请从该片段最后一句之后继续续写，只输出后续正文，不要重复已经写过的内容。`;
@@ -347,7 +351,10 @@ export function useAutoPipeline(
               const criticalFailures = [
                 !reviewResult.timeline.passed && `时间线问题：${reviewResult.timeline.detail}`,
                 !reviewResult.characters.passed && `人物行为问题：${reviewResult.characters.detail}`,
+                !reviewResult.location.passed && `地点矛盾：${reviewResult.location.detail}`,
+                !reviewResult.props.passed && `道具问题：${reviewResult.props.detail}`,
               ].filter(Boolean);
+              // emotionHook 仅记录不触发重写（章末钩子缺失不值得完全重写）
 
               if (criticalFailures.length === 0) break;
 
@@ -356,8 +363,9 @@ export function useAutoPipeline(
                 current: 2 + i * 2 + 2, total: totalSteps,
               });
 
-              // 用审查失败项作为重写指令
-              const rewritePrompt = `根据以下逻辑审查问题修正本章：\n${criticalFailures.join('\n')}`;
+              // 用审查失败项作为重写指令，附上原文让模型定向修正而非从头重写
+              const currentContent = allChapters[i].content || '';
+              const rewritePrompt = `以下是需要修正的当前正文：\n${currentContent.slice(-2000)}\n\n请针对以下问题定向修正（保持其他未提及的部分基本不变）：\n${criticalFailures.join('\n')}`;
               const rewriteComp = compileChapterPrompt({
                 outline: currentOutline,
                 chapterNum: ch.chapterNumber,
@@ -368,6 +376,7 @@ export function useAutoPipeline(
                 extraSkillKeys: ch.extraSkillKeys || [],
                 extraSkillText: ch.extraSkillText || '',
                 storyMemory: currentStoryMemory,
+                genre: project.genre,
               });
               let rewriteAcc = '';
               await runLLMStream('chapter', rewriteComp.system, rewriteComp.user, tok => {
@@ -391,6 +400,14 @@ export function useAutoPipeline(
               }, streamOptions);
               await db.chapters.update(ch.id!, { logicCheckLog: reviewAcc });
               checkPause();
+            }
+
+            // 重写后重新提取故事记忆（用最终版本更新记忆）
+            const finalContent = allChapters[i].content;
+            if (finalContent) {
+              currentStoryMemory = await extractAndSaveStoryMemory(
+                projectId, finalContent, ch.chapterNumber, currentStoryMemory,
+              );
             }
           }
           autoState.phase = 'chapter';

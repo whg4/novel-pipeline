@@ -140,10 +140,11 @@ export function useChapterDrafting(
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSavedDraftRef = useRef<string>('');
   const [saveStatus, setSaveStatus] = useState<'idle' | 'pending' | 'saved'>('idle');
+  const isLocalGeneratingRef = useRef(false);
 
   useEffect(() => {
-    // 生成中不自动保存（由生成流程自行保存）
-    if (!activeChapterId || !editingDraft) return;
+    // 生成中不自动保存（由生成流程自行保存，避免竞态覆盖）
+    if (!activeChapterId || !editingDraft || isLocalGeneratingRef.current) return;
     // 内容未变化则跳过
     if (editingDraft === lastSavedDraftRef.current) return;
 
@@ -244,6 +245,7 @@ export function useChapterDrafting(
   const handleGenerateChapterStream = async (resume = false, promptOverride?: string, extraSkillTextOverride?: string) => {
     if (activeChapterId === null || !project) return;
     const streamOptions = beginGenerationTask('chapter', resume);
+    isLocalGeneratingRef.current = true;
     setIsGenerating(true);
     setChapterError(null);
     if (!resume) setEditingContent('');
@@ -269,6 +271,7 @@ export function useChapterDrafting(
         extraSkillKeys: chapterExtraSkillKeys,
         extraSkillText: effectiveSkillText,
         storyMemory: currentStoryMemory,
+        genre: project.genre,
       });
 
       const recentFeedback = chapterChatMessages
@@ -312,6 +315,7 @@ export function useChapterDrafting(
         setChapterError(e.message);
       }
     } finally {
+      isLocalGeneratingRef.current = false;
       setIsGenerating(false);
       finishGenerationTask('chapter', wasPaused);
     }

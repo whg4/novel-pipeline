@@ -191,13 +191,22 @@ export function saveStageModelOverride(stage: StageRole, model: string) {
   localStorage.setItem(STAGE_MODEL_OVERRIDES_KEY, JSON.stringify(overrides));
 }
 
+// 各阶段推荐温度（审查/验证低温更精确，写作/营销高温更创意）
+const STAGE_TEMPERATURES: Record<StageRole, number> = {
+  outline: 0.6,
+  chapter: 0.8,
+  review: 0.3,
+  marketing: 0.9,
+};
+
 // 取某阶段实际生效的模型配置
 export function getConfigForStage(stage: StageRole): APIConfig {
   const assignments = getStageAssignments();
   const provider = assignments[stage];
   const config = getProviderConfig(provider);
   const modelOverride = getStageModelOverrides()[stage];
-  return modelOverride ? { ...config, model: normalizeModelForProvider(provider, modelOverride) } : config;
+  const base = modelOverride ? { ...config, model: normalizeModelForProvider(provider, modelOverride) } : config;
+  return { ...base, temperature: STAGE_TEMPERATURES[stage] ?? base.temperature };
 }
 
 function buildUrl(baseUrl: string, suffix: string): string {
@@ -826,25 +835,25 @@ export function compileOutlineLogicReviewPrompt(
     projectContext?.rawExample ? `--- 参考例文（节选）---\n${projectContext.rawExample.slice(0, 2000)}` : '',
   ].filter(Boolean).join('\n\n');
 
-  const system = `You are a meticulous literary editor specializing in story structure and plot consistency.
-You will review a novel outline and identify any logical issues, structural problems, or areas that need improvement.
+  const system = `你是一位严谨的网文结构编辑，专门审查小说大纲的情节逻辑和结构完整性。
+你需要找出大纲中的逻辑问题、结构缺陷和需要改进的地方。
 
---- REVIEW FRAMEWORK ---
+--- 审查框架 ---
 ${logicCheckSkill}`;
 
-  const user = `Please review the following novel outline for:
-1. Timeline and pacing consistency
-2. Character motivation coherence${projectContext?.characters ? ' (compare against character settings)' : ''}
-3. Plot logic and cause-effect chains
-4. Foreshadowing and payoff alignment
-5. Chapter structure and cliffhanger effectiveness
-6. Any gaps or contradictions
-${projectContext?.rawExample ? '7. Whether the outline faithfully captures the reference text\'s structure and pacing\n' : ''}
+  const user = `请审查以下小说大纲：
+1. 时间线和节奏一致性
+2. 角色动机连贯性${projectContext?.characters ? '（对照人物设定）' : ''}
+3. 情节因果链
+4. 伏笔与回收对齐
+5. 章节结构和钩子效果
+6. 缺失或矛盾之处
+${projectContext?.rawExample ? '7. 大纲是否忠实复刻了参考原文的节奏和结构\n' : ''}
 ${contextSection ? `\n${contextSection}\n` : ''}
---- NOVEL OUTLINE TO REVIEW ---
+--- 待审查大纲 ---
 ${outline}
 
-Provide your review in Chinese. Be specific and actionable with each suggestion.`;
+请用中文输出审查报告。每个问题要具体、可操作。`;
 
   return { system, user };
 }
@@ -861,6 +870,7 @@ export function compileChapterPrompt({
   extraSkillText = '',
   maxContextTokens,
   storyMemory,
+  genre,
 }: {
   outline: string;
   chapterNum: number;
@@ -874,6 +884,8 @@ export function compileChapterPrompt({
   maxContextTokens?: number;
   /** 故事记忆（跨章节连续性信息） */
   storyMemory?: import('../types').StoryMemory;
+  /** 题材类型（用于注入题材专属 Skill） */
+  genre?: string;
 }): { system: string; user: string } {
   // 动态计算 token 预算：取模型 context window 的 60%，预留 40% 给输出 + 系统开销
   const tokenBudget = maxContextTokens ?? (() => {
@@ -884,6 +896,11 @@ export function compileChapterPrompt({
   const degreaseSkill = skills.find(s => s.key === 'degrease')?.content || '';
   const connectSkill = skills.find(s => s.key === 'connect_skills')?.content || '';
   const logicCheckSkill = skills.find(s => s.key === 'logic_check')?.content || '';
+  const genreSkill = genre === 'classic-wolf'
+    ? (skills.find(s => s.key === 'wolf_setting')?.content || '')
+    : genre === 'female-slap'
+      ? (skills.find(s => s.key === 'female_slap')?.content || '')
+      : '';
   const extraSkillContents = extraSkillKeys
     .map(k => skills.find(s => s.key === k)?.content || '')
     .filter(Boolean);
@@ -897,6 +914,7 @@ ${degreaseSkill}
 
 --- 《串联》（章节衔接要求）---
 ${connectSkill}
+${genreSkill ? `\n--- 题材专属设定 ---\n${genreSkill}` : ''}
 
 --- 《逻辑审查》（写作过程中内部自检，不输出到正文）---
 ${logicCheckSkill}
@@ -913,7 +931,7 @@ ${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}
   if (previousChapters.length > 0) {
     const prev = previousChapters[previousChapters.length - 1];
     const prevText = prev.content;
-    const lastPart = prevText.length > 1000 ? prevText.substring(prevText.length - 1000) : prevText;
+    const lastPart = prevText.length > 2000 ? prevText.substring(prevText.length - 2000) : prevText;
     // 使用标记包裹，方便后续 token 裁剪时精准替换
     precedingContext = `<<<PREV_CHAPTER>>>\n"${lastPart}"\n<<<END_PREV_CHAPTER>>>\n\n必须从此结尾无缝衔接，保证时间、空间和情绪的连续性，不留断层。`;
   }
@@ -926,6 +944,10 @@ ${extraSkillText ? `\n--- 临时补充 Skill ---\n${extraSkillText}` : ''}
     }${
       storyMemory.foreshadowingList?.length
         ? `伏笔状态：\n${storyMemory.foreshadowingList.filter(f => f.status === 'planted').map(f => `未收: ${f.text}`).join('\n')}\n`
+        : ''
+    }${
+      storyMemory.chapterSummaries?.length
+        ? `近期章节回顾：\n${storyMemory.chapterSummaries.slice(-5).map(s => `第${s.chapter}章: ${s.summary}`).join('\n')}\n`
         : ''
     }`
     : '';
@@ -1039,7 +1061,11 @@ export function compileLogicReviewPrompt(
     context?.background ? `--- 项目背景 ---\n${context.background}` : '',
     context?.characters ? `--- 人物设定 ---\n${context.characters}` : '',
     context?.chapterOutline ? `--- 第 ${chapterNum} 章大纲（对照参考）---\n${context.chapterOutline}` : '',
-    context?.storyMemory ? `--- 故事记忆（已建立的事实）---\n角色状态：${context.storyMemory.characterStates}\n未收伏笔：${context.storyMemory.openForeshadowing}\n关键事件：${context.storyMemory.keyEvents}` : '',
+    context?.storyMemory ? `--- 故事记忆（已建立的事实）---\n角色状态：${context.storyMemory.characterStates}\n未收伏笔：${context.storyMemory.openForeshadowing}\n关键事件：${context.storyMemory.keyEvents}\n${
+      context.storyMemory.timeline?.length ? `事件时间线：\n${context.storyMemory.timeline.slice(-10).map(t => `第${t.chapter}章: ${t.event}`).join('\n')}\n` : ''
+    }${
+      context.storyMemory.foreshadowingList?.length ? `伏笔状态：\n${context.storyMemory.foreshadowingList.filter(f => f.status === 'planted').map(f => `未收: ${f.text}`).join('\n')}\n` : ''
+    }` : '',
   ].filter(Boolean).join('\n\n');
 
   if (structured) {
@@ -1136,13 +1162,14 @@ export function compileStoryMemoryExtractionPrompt(
   const system = `你是一位小说连续性分析专家。你的任务是从章节正文中提取关键的连续性信息，用于帮助后续章节的创作保持一致性。
 你必须输出严格 JSON，不要 Markdown，不要解释。JSON 结构如下：
 {
-  "characterStates": "角色当前状态摘要（简洁，不超过 200 字）",
-  "openForeshadowing": "未收伏笔清单（简洁，不超过 200 字）",
-  "keyEvents": "影响后续剧情的关键事件（简洁，不超过 200 字）",
+  "characterStates": "角色当前状态摘要（不超过 500 字）",
+  "openForeshadowing": "未收伏笔清单（不超过 500 字）",
+  "keyEvents": "影响后续剧情的关键事件（不超过 500 字）",
   "timeline": [{"chapter": 章节号, "event": "事件描述"}],
-  "foreshadowingList": [{"text": "伏笔内容", "status": "planted/resolved/abandoned", "chapter": 关联章节号}]
+  "foreshadowingList": [{"text": "伏笔内容", "status": "planted/resolved/abandoned", "chapter": 关联章节号}],
+  "chapterSummary": "本章 1-2 句话摘要（用于快速回顾）"
 }
-timeline 只记录本章新发生的关键事件。foreshadowingList 记录伏笔的当前状态变化。`;
+timeline 只记录本章新发生的关键事件。foreshadowingList 记录伏笔的当前状态变化。chapterSummary 用一两句话概括本章核心事件。`;
 
   const prevSection = previousMemory
     ? `--- 之前的故事记忆 ---
@@ -1185,6 +1212,8 @@ export async function extractAndSaveStoryMemory(
     await runLLMStream('review', compiled.system, compiled.user, tok => { raw += tok; });
 
     const parsed = JSON.parse(extractJsonObject(raw)) as any;
+    const newSummary = typeof parsed.chapterSummary === 'string' ? parsed.chapterSummary : '';
+    const prevSummaries = previousMemory?.chapterSummaries || [];
     const memory: import('../types').StoryMemory = {
       characterStates: typeof parsed.characterStates === 'string' ? parsed.characterStates : '',
       openForeshadowing: typeof parsed.openForeshadowing === 'string' ? parsed.openForeshadowing : '',
@@ -1195,6 +1224,11 @@ export async function extractAndSaveStoryMemory(
       foreshadowingList: Array.isArray(parsed.foreshadowingList)
         ? parsed.foreshadowingList
         : previousMemory?.foreshadowingList || [],
+      chapterSummaries: newSummary
+        ? [...prevSummaries, { chapter: chapterNum, summary: newSummary }].slice(-20)
+        : prevSummaries,
+      chaptersAnalyzed: chapterNum,
+      lastExtractionSuccess: true,
       updatedAt: Date.now(),
     };
 
@@ -1202,7 +1236,13 @@ export async function extractAndSaveStoryMemory(
     await db.projects.update(projectId, { storyMemory: memory });
     return memory;
   } catch {
-    // 故事记忆提取失败不影响主流程
+    // 故事记忆提取失败不影响主流程，但标记失败状态
+    if (previousMemory) {
+      try {
+        const { db: dbFail } = await import('../db');
+        await dbFail.projects.update(projectId, { storyMemory: { ...previousMemory, lastExtractionSuccess: false, updatedAt: Date.now() } });
+      } catch { /* ignore */ }
+    }
     return undefined;
   }
 }

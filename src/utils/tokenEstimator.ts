@@ -19,6 +19,7 @@ export const MODEL_CONTEXT_WINDOWS: Record<string, number> = {
   'gemini-2.5-flash': 1_048_576,
   'gemini-2.0-flash': 1_048_576,
   'gemini-2.0-flash-lite': 1_048_576,
+  'gemini-3.1-pro': 1_048_576,
   'deepseek-chat': 65_536,
   'deepseek-reasoner': 65_536,
   'grok-2': 131_072,

@@ -45,7 +45,7 @@ interface OutlineStudioProps {
   onEditResend?: (messageId: number, newContent: string) => void;
   onPause: () => void;
   renderTaskControl: TaskControlRender;
-  syncOutlineChaptersToDb: (outline: string, projectId: number) => Promise<number>;
+  syncOutlineChaptersToDb: (outline: string, projectId: number) => Promise<{ count: number; staleChapters: number[] }>;
   setShowOutlineEditor: Dispatch<SetStateAction<boolean>>;
   setShowOutlineSkillPopover: Dispatch<SetStateAction<boolean>>;
   setShowExampleModal: Dispatch<SetStateAction<boolean>>;
@@ -176,10 +176,15 @@ export default function OutlineStudio({
                     label: '同步章节',
                     disabled: isGenerating || !project.outline,
                     onClick: async () => {
-                      const n = await syncOutlineChaptersToDb(project.outline, projectId);
-                      n > 0
-                        ? antdMessage.success(`已同步 ${n} 个章节`)
-                        : antdMessage.warning('未找到章节（需包含"### 第 X 章"格式）');
+                      const { count, staleChapters } = await syncOutlineChaptersToDb(project.outline, projectId);
+                      if (count > 0) {
+                        antdMessage.success(`已同步 ${count} 个章节`);
+                        if (staleChapters.length > 0) {
+                          antdMessage.warning(`第 ${staleChapters.join('、')} 章大纲已变更，建议重新生成正文`);
+                        }
+                      } else {
+                        antdMessage.warning('未找到章节（需包含"### 第 X 章"格式）');
+                      }
                     },
                   },
                   {
