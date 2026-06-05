@@ -151,11 +151,12 @@ export function useChapterDrafting(
     setSaveStatus('pending');
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
-      const ch = chapters.find(c => c.id === activeChapterId);
-      if (!ch || ch.content === editingDraft) { setSaveStatus('idle'); return; }
-      const updatedHistory = [...(ch.versionHistory || [])];
-      if (ch.content) {
-        updatedHistory.push({ content: ch.content, timestamp: Date.now() });
+      // 从 DB 读取最新版本历史（避免与手动保存竞态）
+      const latestCh = await db.chapters.get(activeChapterId);
+      if (!latestCh || latestCh.content === editingDraft) { setSaveStatus('idle'); return; }
+      const updatedHistory = [...(latestCh.versionHistory || [])];
+      if (latestCh.content) {
+        updatedHistory.push({ content: latestCh.content, timestamp: Date.now() });
       }
       await db.chapters.update(activeChapterId, {
         content: editingDraft,

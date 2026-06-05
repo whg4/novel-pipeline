@@ -63,11 +63,12 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   useEffect(() => {
     if (!project || userManuallySwitched) return;
     const hasOutline = project.outline && project.outline.length >= 50;
-    const hasContent = chapters.some(c => c.content && c.content.length >= 100);
+    const chaptersWithContent = chapters.filter(c => c.content && c.content.length >= 100);
+    const allChaptersComplete = chapters.length > 0 && chaptersWithContent.length === chapters.length;
 
     if (!hasOutline) setPipelineTab('outline');
-    else if (hasOutline && !hasContent) setPipelineTab('drafting');
-    else if (hasContent) setPipelineTab('drafting');
+    else if (allChaptersComplete) setPipelineTab('marketing');
+    else setPipelineTab('drafting');
   }, [project?.outline, chapters.length]);
 
   // ---- Hook: 章节写作（需先定义以获取 activeChapterId）----
@@ -106,7 +107,18 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
   );
 
   // ---- 共享工具 ----
-  const renderTaskControl: TaskControlRender = () => null;
+  const renderTaskControl: TaskControlRender = (task, onResume) => {
+    if (pausedTask !== task) return null;
+    return (
+      <button
+        onClick={() => { onResume(); }}
+        className="flex items-center gap-1 text-[#1677ff] text-xs font-bold px-2 py-1 border border-[#1677ff] hover:bg-[#e6f4ff] transition"
+        title="继续上次中断的任务"
+      >
+        <Play size={10} /> 继续
+      </button>
+    );
+  };
 
   const handleExportNovelMarkdown = () => {
     const exportChapters = [...chapters]
@@ -185,7 +197,7 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
             onClick={handleExportNovelMarkdown}
             className="flex items-center gap-1.5 bg-white border border-[#eaeaea] hover:bg-[#f5f5f5] text-[#696b72] text-xs font-bold px-3 py-1.5 transition"
           >
-            <Download size={12} /> 导出小说
+            <Download size={12} /> 导出正文
           </button>
 
           {!autoHook.isAutoRunning && !pausedTask && (
@@ -216,7 +228,8 @@ export default function PipelineView({ projectId }: PipelineViewProps) {
               <button
                 onClick={() => autoHook.handleRunAutoPipeline(false)}
                 disabled={isGenerating}
-                className="flex items-center gap-1.5 bg-black hover:bg-[#333] disabled:opacity-40 text-white text-xs font-bold px-3 py-1.5 transition"
+                title={isGenerating ? '请等待当前生成完成' : '一键完成大纲→写作→审查→营销'}
+                className="flex items-center gap-1.5 bg-black hover:bg-[#333] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold px-3 py-1.5 transition"
               >
                 <Play size={12} /> 一键全自动
               </button>

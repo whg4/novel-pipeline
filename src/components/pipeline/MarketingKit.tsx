@@ -1,3 +1,4 @@
+import { message as antdMessage } from 'antd';
 import type { GenerationTask, TaskControlRender } from '../../hooks/usePipelineTask';
 import {
   Sparkles, ImageIcon, Download, Copy, RefreshCw,
@@ -81,7 +82,7 @@ export default function MarketingKit({
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(blurbsOutput);
-                  alert('已复制所有简介！');
+                  antdMessage.success('已复制所有简介！');
                 }}
                 className="text-black hover:text-black font-bold"
               >
@@ -137,7 +138,7 @@ export default function MarketingKit({
             )}
             {coverImagePrompt && (
               <button
-                onClick={() => { navigator.clipboard.writeText(coverImagePrompt); alert('提示词已复制！'); }}
+                onClick={() => { navigator.clipboard.writeText(coverImagePrompt); antdMessage.success('提示词已复制！'); }}
                 className="border border-[#eaeaea] bg-white hover:bg-[#f5f5f5] text-[#171717] text-xs font-bold px-3 py-2 transition"
               >
                 <Copy size={12} />

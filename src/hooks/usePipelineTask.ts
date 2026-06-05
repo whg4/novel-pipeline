@@ -14,6 +14,11 @@ export function usePipelineTask() {
   const pausedTaskRef = useRef<GenerationTask | null>(null);
 
   const beginGenerationTask = (task: GenerationTask, resume = false) => {
+    // 如果有正在运行的任务且不是恢复同一任务，先中止旧任务
+    if (activeTask && activeTask !== task && generationAbortRef.current) {
+      generationAbortRef.current.abort();
+    }
+
     const controller = new AbortController();
     generationAbortRef.current = controller;
     pausedTaskRef.current = null;

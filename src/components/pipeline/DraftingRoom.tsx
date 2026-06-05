@@ -222,7 +222,7 @@ export default function DraftingRoom({
                 }`}
               >
                 <span>
-                  第 {ch.chapterNumber} 章: {ch.title.split(':').pop()?.trim()}
+                  第 {ch.chapterNumber} 章: {ch.title.split(/[：:]/).pop()?.trim() || ch.title}
                 </span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Button
@@ -575,7 +575,7 @@ export default function DraftingRoom({
                 if (viewingChapter) {
                   navigator.clipboard
                     .writeText(viewingChapter.content)
-                    .then(() => alert('已复制！'));
+                    .then(() => antdMessage.success('已复制！'));
                 }
               }}
             >

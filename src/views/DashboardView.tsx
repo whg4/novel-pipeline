@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { message as antdMessage } from 'antd';
+import { message as antdMessage, Modal, Input } from 'antd';
 import { db } from '../db';
 import { Project } from '../types';
 import { Plus, BookOpen, Clock, Tag, History, Trash2, Award, FileUp, Download, Upload } from 'lucide-react';
@@ -22,6 +22,8 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
   const [characters, setCharacters] = useState('');
   const [rawExample, setRawExample] = useState('');
   const [showGuide, setShowGuide] = useState(false);
+  const [showTemplateNameModal, setShowTemplateNameModal] = useState(false);
+  const [templateName, setTemplateName] = useState('');
   const importInputRef = useRef<HTMLInputElement>(null);
   const templates = getTemplates();
 
@@ -36,11 +38,15 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
   const handleDeleteProject = async (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
     if (confirm('确定要删除这个小说项目吗？已生成的大纲、正文草稿和版本记录都会被永久删除。')) {
-      await db.projects.delete(id);
+      // 删除关联的章节
       const projectChapters = chapters.filter(c => c.projectId === id);
       for (const ch of projectChapters) {
         if (ch.id) await db.chapters.delete(ch.id);
       }
+      // 删除关联的聊天记录
+      await db.chatMessages.where('projectId').equals(id).delete();
+      // 删除项目
+      await db.projects.delete(id);
     }
   };
 
@@ -366,18 +372,8 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
                 <button
                   type="button"
                   onClick={() => {
-                    const name = prompt('模板名称：');
-                    if (name?.trim()) {
-                      saveTemplate({
-                        name: name.trim(),
-                        genre,
-                        background,
-                        characters,
-                        defaultSkillKeys: [],
-                        createdAt: Date.now(),
-                      });
-                      antdMessage.success(`模板「${name.trim()}」已保存`);
-                    }
+                    setTemplateName('');
+                    setShowTemplateNameModal(true);
                   }}
                   className="text-[10px] text-[#888] hover:text-black transition underline"
                 >
@@ -404,6 +400,42 @@ export default function DashboardView({ onSelectProject }: DashboardViewProps) {
           </div>
         </div>
       )}
+
+      {/* Template Name Modal */}
+      <Modal
+        title="保存为模板"
+        open={showTemplateNameModal}
+        onCancel={() => setShowTemplateNameModal(false)}
+        onOk={async () => {
+          if (!templateName.trim()) { antdMessage.warning('请输入模板名称'); return; }
+          await saveTemplate({
+            name: templateName.trim(),
+            genre,
+            background,
+            characters,
+            defaultSkillKeys: [],
+            createdAt: Date.now(),
+          });
+          antdMessage.success(`模板「${templateName.trim()}」已保存`);
+          setShowTemplateNameModal(false);
+        }}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Input
+          value={templateName}
+          onChange={e => setTemplateName(e.target.value)}
+          placeholder="输入模板名称，如：狼人爽文模板"
+          onPressEnter={() => {
+            if (templateName.trim()) {
+              saveTemplate({ name: templateName.trim(), genre, background, characters, defaultSkillKeys: [], createdAt: Date.now() });
+              antdMessage.success(`模板「${templateName.trim()}」已保存`);
+              setShowTemplateNameModal(false);
+            }
+          }}
+          autoFocus
+        />
+      </Modal>
 
       {/* Quick Start Guide */}
       {showGuide && (

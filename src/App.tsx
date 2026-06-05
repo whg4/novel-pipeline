@@ -9,6 +9,7 @@ import SkillRegistry from './views/SkillRegistry';
 import SettingsView from './views/SettingsView';
 import PipelineView from './views/PipelineView';
 import StageModelView from './views/StageModelView';
+import ErrorBoundary from './components/ErrorBoundary';
 import {
   BookOpen, Layers, BookMarked, Sliders, Key, Heart, Cpu
 } from 'lucide-react';
@@ -138,7 +139,7 @@ function Shell() {
               </NavLink>
             ) : (
               <button
-                onClick={() => alert('请先选择或创建一个小说项目。')}
+                onClick={() => { import('antd').then(({ message }) => message.warning('请先选择或创建一个小说项目。')); }}
                 className="w-full flex items-center gap-3 py-2.5 text-left transition-all text-xs opacity-40 cursor-not-allowed pl-3.5 border-l-2 border-transparent"
               >
                 <span className="text-[9px] font-mono font-bold text-[#888888] w-5 shrink-0">02</span>
@@ -166,14 +167,16 @@ function Shell() {
 
       {/* Main workspace */}
       <main className="flex-1 p-6 md:p-10 overflow-y-auto max-h-screen">
-        <Routes>
-          <Route path="/" element={<DashboardView onSelectProject={handleSelectProject} />} />
-          <Route path="/pipeline/:projectId" element={<PipelineRoute />} />
-          <Route path="/stage-models" element={<StageModelView />} />
-          <Route path="/skills" element={<SkillRegistry />} />
-          <Route path="/settings" element={<SettingsView />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+        <ErrorBoundary>
+          <Routes>
+            <Route path="/" element={<DashboardView onSelectProject={handleSelectProject} />} />
+            <Route path="/pipeline/:projectId" element={<PipelineRoute />} />
+            <Route path="/stage-models" element={<StageModelView />} />
+            <Route path="/skills" element={<SkillRegistry />} />
+            <Route path="/settings" element={<SettingsView />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </ErrorBoundary>
       </main>
     </div>
   );
