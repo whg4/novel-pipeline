@@ -827,12 +827,13 @@ ${reviewFeedback}
 export function compileOutlineLogicReviewPrompt(
   outline: string,
   logicCheckSkill: string,
-  projectContext?: { background?: string; characters?: string; rawExample?: string },
+  projectContext?: { background?: string; characters?: string; rawExample?: string; storyMemory?: import('../types').StoryMemory },
 ): { system: string; user: string } {
   const contextSection = [
     projectContext?.background ? `--- 项目背景 ---\n${projectContext.background}` : '',
     projectContext?.characters ? `--- 人物设定 ---\n${projectContext.characters}` : '',
     projectContext?.rawExample ? `--- 参考例文（节选）---\n${projectContext.rawExample.slice(0, 2000)}` : '',
+    projectContext?.storyMemory ? `--- 已建立的故事记忆 ---\n角色状态：${projectContext.storyMemory.characterStates}\n未收伏笔：${projectContext.storyMemory.openForeshadowing}\n关键事件：${projectContext.storyMemory.keyEvents}` : '',
   ].filter(Boolean).join('\n\n');
 
   const system = `你是一位严谨的网文结构编辑，专门审查小说大纲的情节逻辑和结构完整性。
@@ -1069,9 +1070,16 @@ export function compileLogicReviewPrompt(
   ].filter(Boolean).join('\n\n');
 
   if (structured) {
+    const hasOutline = !!context?.chapterOutline;
+    const hasMemory = !!context?.storyMemory;
+    const extraKeys = [
+      hasOutline ? '"outlineFidelity":{"passed":true,"detail":"理由"}' : '',
+      hasMemory ? '"memoryConsistency":{"passed":true,"detail":"理由"}' : '',
+    ].filter(Boolean).join(',');
+
     const system = `你是一位专业的小说逻辑审查编辑，严格依照《小说正文逻辑审查流程 Skill v3.2》执行审查。
 你必须输出严格 JSON，不要 Markdown 包裹，不要解释文字。JSON 结构如下：
-{"timeline":{"passed":true,"detail":"理由"},"location":{"passed":true,"detail":"理由"},"props":{"passed":true,"detail":"理由"},"characters":{"passed":true,"detail":"理由"},"emotionHook":{"passed":true,"detail":"理由"},"summary":"一句话总评"}
+{"timeline":{"passed":true,"detail":"理由"},"location":{"passed":true,"detail":"理由"},"props":{"passed":true,"detail":"理由"},"characters":{"passed":true,"detail":"理由"},"emotionHook":{"passed":true,"detail":"理由"}${extraKeys ? ',' + extraKeys : ''},"summary":"一句话总评"}
 passed 只能是 boolean。detail 用中文，必须具体指出通过依据或失败原因。`;
 
     const user = `--- 逻辑审查规则（Skill v3.2）---
@@ -1086,8 +1094,8 @@ ${chapterContent}
 3. 道具（props）：获取时间、名称一致性、材质常识
 4. 人物与行为（characters）：已知信息行为悖论${context?.characters ? '（对照人物设定）' : ''}
 5. 情感节奏（emotionHook）：章末钩子是否已设置${context?.chapterOutline ? '（对照大纲要求）' : ''}
-${context?.chapterOutline ? '\n同时检查：正文是否完成了大纲中规定的关键事件。' : ''}
-${context?.storyMemory ? '\n同时检查：正文是否与已建立的故事记忆（角色状态、伏笔、关键事件）一致。' : ''}
+${hasOutline ? '6. 大纲忠实度（outlineFidelity）：正文是否完成了大纲中规定的关键事件，是否引入大纲未提及的重大事件' : ''}
+${hasMemory ? '7. 记忆一致性（memoryConsistency）：正文是否与已建立的故事记忆（角色状态、伏笔、关键事件）一致' : ''}
 
 只输出 JSON。`;
 
@@ -1146,6 +1154,8 @@ export function parseLogicReviewResult(raw: string): import('../types').LogicRev
       props: parseItem(parsed.props),
       characters: parseItem(parsed.characters),
       emotionHook: parseItem(parsed.emotionHook),
+      ...(parsed.outlineFidelity ? { outlineFidelity: parseItem(parsed.outlineFidelity) } : {}),
+      ...(parsed.memoryConsistency ? { memoryConsistency: parseItem(parsed.memoryConsistency) } : {}),
       summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
     };
   } catch {
@@ -1218,12 +1228,20 @@ export async function extractAndSaveStoryMemory(
       characterStates: typeof parsed.characterStates === 'string' ? parsed.characterStates : '',
       openForeshadowing: typeof parsed.openForeshadowing === 'string' ? parsed.openForeshadowing : '',
       keyEvents: typeof parsed.keyEvents === 'string' ? parsed.keyEvents : '',
+      // 伏笔列表增量合并：保留旧列表中 LLM 遗漏的未解决项
+      foreshadowingList: (() => {
+        const newList = Array.isArray(parsed.foreshadowingList) ? parsed.foreshadowingList : [];
+        const oldList = previousMemory?.foreshadowingList || [];
+        const newTexts = new Set(newList.map((f: any) => f.text));
+        const preserved = oldList.filter(f => !newTexts.has(f.text) && f.status === 'planted');
+        return [...newList, ...preserved].slice(-30);
+      })(),
+      // 时间线去重：按 chapter+event 去重，保留最新
       timeline: Array.isArray(parsed.timeline)
-        ? [...(previousMemory?.timeline || []), ...parsed.timeline].slice(-50)
+        ? [...(previousMemory?.timeline || []), ...parsed.timeline]
+            .filter((t, i, arr) => arr.findIndex(x => x.chapter === t.chapter && x.event === t.event) === i)
+            .slice(-50)
         : previousMemory?.timeline || [],
-      foreshadowingList: Array.isArray(parsed.foreshadowingList)
-        ? parsed.foreshadowingList
-        : previousMemory?.foreshadowingList || [],
       chapterSummaries: newSummary
         ? [...prevSummaries, { chapter: chapterNum, summary: newSummary }].slice(-20)
         : prevSummaries,
@@ -1236,12 +1254,13 @@ export async function extractAndSaveStoryMemory(
     await db.projects.update(projectId, { storyMemory: memory });
     return memory;
   } catch {
-    // 故事记忆提取失败不影响主流程，但标记失败状态
+    // 故事记忆提取失败：保留旧记忆（防止级联丢失），标记失败状态
     if (previousMemory) {
       try {
         const { db: dbFail } = await import('../db');
         await dbFail.projects.update(projectId, { storyMemory: { ...previousMemory, lastExtractionSuccess: false, updatedAt: Date.now() } });
       } catch { /* ignore */ }
+      return previousMemory; // 返回旧记忆而非 undefined
     }
     return undefined;
   }

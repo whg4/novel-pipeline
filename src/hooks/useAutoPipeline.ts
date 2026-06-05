@@ -3,7 +3,7 @@ import { message as antdMessage } from 'antd';
 import { db } from '../db';
 import type { Project, Skill } from '../types';
 import {
-  runLLMStream, compileOutlinePrompt, compileChapterPrompt, compileBlurbPrompt,
+  runLLMStream, compileOutlinePrompt, compileOutlineRevisionPrompt, compileChapterPrompt, compileBlurbPrompt,
   compileTitlePrompt, compileCoverPrompt, compileLogicReviewPrompt,
   parseLogicReviewResult,
   validateOutlineAgainstChecklist, OUTLINE_CHECKLIST_ITEMS,
@@ -23,6 +23,7 @@ interface AutoPipelineResumeState {
   validationFeedback: string;
   chapterIndex: number;
   chapterId?: number;
+  staleChapters?: number[];
   partialText: string;
   totalSteps: number;
 }
@@ -173,18 +174,37 @@ export function useAutoPipeline(
           const slapSkill = project.genre === 'female-slap'
             ? (skills.find(s => s.key === 'female_slap')?.content || undefined)
             : undefined;
-          const compiled = compileOutlinePrompt(
-            project.rawExample,
-            project.background,
-            project.characters,
-            outlineTemplate,
-            autoState.validationFeedback || undefined,
-            wolfSkill,
-            slapSkill,
-            [],
-            '',
-            skills,
-          );
+
+          // 第 1 轮用生成 prompt；后续轮次用修订 prompt（精准修正，不从头重写）
+          let compiled;
+          if (attempt > 1 && currentOutline && currentOutline.length >= 50) {
+            const extraSkillContents = outlineTemplate ? [outlineTemplate] : [];
+            compiled = compileOutlineRevisionPrompt(
+              currentOutline,
+              autoState.validationFeedback || '请根据审查反馈修正大纲',
+              project.background,
+              project.characters,
+              outlineTemplate,
+              wolfSkill,
+              slapSkill,
+              extraSkillContents,
+              '',
+              project.rawExample || undefined,
+            );
+          } else {
+            compiled = compileOutlinePrompt(
+              project.rawExample,
+              project.background,
+              project.characters,
+              outlineTemplate,
+              autoState.validationFeedback || undefined,
+              wolfSkill,
+              slapSkill,
+              [],
+              '',
+              skills,
+            );
+          }
           if (resumingOutline) {
             compiled.user += `\n--- 已生成但暂停的大纲片段 ---\n${autoState.partialText}\n\n请从该片段后继续补全，不要重写已经输出的部分。`;
           }
@@ -241,9 +261,10 @@ export function useAutoPipeline(
       if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.sync) {
         autoState.phase = 'sync';
         setAutoProgress({ step: '解析章节结构', current: 2, total: 7 });
-        const { count: parsedCount, staleChapters } = await syncOutlineChaptersToDb(currentOutline, projectId);
-        if (staleChapters.length > 0) {
-          antdMessage.info(`第 ${staleChapters.join('、')} 章大纲已变更，将重新生成正文`);
+        const { count: parsedCount, staleChapters: syncedStale } = await syncOutlineChaptersToDb(currentOutline, projectId);
+        autoState.staleChapters = syncedStale;
+        if (syncedStale.length > 0) {
+          antdMessage.info(`第 ${syncedStale.join('、')} 章大纲已变更，将重新生成正文`);
         }
         if (parsedCount === 0) {
           throw new Error(
@@ -267,11 +288,12 @@ export function useAutoPipeline(
       autoState.totalSteps = totalSteps;
 
       if (AUTO_PHASE_ORDER[autoState.phase] <= AUTO_PHASE_ORDER.review) {
+        const staleSet = new Set(autoState.staleChapters || []);
         const startIndex = (
           autoState.phase === 'chapter' || autoState.phase === 'review'
         ) ? autoState.chapterIndex : (() => {
           const firstIncomplete = allChapters.findIndex(
-            ch => !ch.content || ch.content.length < 100 || !ch.logicCheckLog
+            ch => !ch.content || ch.content.length < 100 || !ch.logicCheckLog || staleSet.has(ch.chapterNumber)
           );
           return firstIncomplete === -1 ? allChapters.length : firstIncomplete;
         })();
@@ -311,17 +333,19 @@ export function useAutoPipeline(
             autoState.partialText = '';
             if (activeChapterId === ch.id) uiSetters.setEditingContent(draftAcc);
 
-            // 提取故事记忆（异步，失败不影响主流程）
-            currentStoryMemory = await extractAndSaveStoryMemory(
+            // 提取故事记忆（失败时保留旧记忆，不级联丢失）
+            const newMemory = await extractAndSaveStoryMemory(
               projectId, draftAcc, ch.chapterNumber, currentStoryMemory,
             );
+            if (newMemory) currentStoryMemory = newMemory;
+            // newMemory 为 undefined 时 currentStoryMemory 保持不变
           }
           checkPause();
 
           setAutoProgress({ step: `审查第 ${ch.chapterNumber} 章逻辑`, current: 2 + i * 2 + 2, total: totalSteps });
           const content = allChapters[i].content;
-          const resumingReview = resume && autoState.phase === 'review' && autoState.chapterIndex === i && !!autoState.partialText;
-          const needsReview = resumingReview || !allChapters[i].logicCheckLog;
+          // 审查暂停恢复时丢弃不完整片段，重新开始（审查是无状态的，续写 JSON 片段不可靠）
+          const needsReview = !allChapters[i].logicCheckLog;
           if (content && logicSkill && needsReview) {
             autoState.phase = 'review';
             autoState.chapterIndex = i;
@@ -332,10 +356,7 @@ export function useAutoPipeline(
               background: project.background,
               characters: project.characters,
             });
-            if (resumingReview) {
-              reviewComp.user += `\n--- 已生成但暂停的审查片段 ---\n${autoState.partialText}\n\n请从该片段后继续补全审查报告，不要重复已经输出的部分。`;
-            }
-            let reviewAcc = resumingReview ? autoState.partialText : '';
+            let reviewAcc = '';
             await runLLMStream('review', reviewComp.system, reviewComp.user, tok => {
               reviewAcc += tok;
               autoState.partialText = reviewAcc;

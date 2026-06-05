@@ -21,6 +21,8 @@ export interface LogicReviewResult {
   props: { passed: boolean; detail: string };
   characters: { passed: boolean; detail: string };
   emotionHook: { passed: boolean; detail: string };
+  outlineFidelity?: { passed: boolean; detail: string };
+  memoryConsistency?: { passed: boolean; detail: string };
   summary: string;
 }
 

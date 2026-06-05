@@ -298,6 +298,11 @@ export function useChapterDrafting(
         lastEdited: Date.now()
       });
       if (!wasPaused) {
+        // 截断检测：正文不以句末标点结束时警告
+        const trimmed = accumulated.trim();
+        if (trimmed.length > 100 && !/[。！？…」』"'")\]】]$/.test(trimmed)) {
+          antdMessage.warning('正文可能被截断（未以句末标点结束），请检查末尾是否完整');
+        }
         await db.chatMessages.add({ projectId, scope: 'chapter', chapterId: activeChapterId, role: 'assistant', kind: 'chapter', content: accumulated, createdAt: Date.now() });
         // 提取故事记忆（异步，失败不影响主流程）
         const chNum = chapters.find(c => c.id === activeChapterId)?.chapterNumber || 1;

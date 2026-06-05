@@ -152,16 +152,18 @@ export async function syncOutlineChaptersToDb(outline: string, projectId: number
     }
   }
 
-  // 删除大纲中已不存在的章节
+  // 删除大纲中已不存在的**空**章节（有内容的章节保留，避免误删）
   const parsedNumbers = new Set(parsed.map(p => p.chapterNumber));
   const existingChapters = await db.chapters
     .where('projectId').equals(projectId)
     .toArray();
   for (const ch of existingChapters) {
     if (ch.id && !parsedNumbers.has(ch.chapterNumber)) {
-      await db.chapters.delete(ch.id);
-      // 同时删除该章节的聊天记录
-      await db.chatMessages.where('chapterId').equals(ch.id).delete();
+      // 有内容的章节不自动删除，只删除空章节
+      if (!ch.content || ch.content.length < 50) {
+        await db.chapters.delete(ch.id);
+        await db.chatMessages.where('chapterId').equals(ch.id).delete();
+      }
     }
   }
 
